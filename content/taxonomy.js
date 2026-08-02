@@ -224,43 +224,98 @@
     }
   };
 
-  // Budget band parsing: enumerated bands, USD + basic INR handling.
-  // Bands: under_50, 50_150, 150_500, 500_plus, unknown
-  function extractBudgetBand(text) {
-    const t = text.toLowerCase();
-
-    // "under $150", "below 10k", "less than 500 rupees", "budget of 2000 rupees"
-    const underPatterns = [
-      /(?:under|below|less than|no more than|max(?:imum)?(?: of)?)\s*(?:rs\.?|inr|₹|\$)?\s*(\d[\d,]*)\s*(k|rupees|rs|inr)?/i
-    ];
-    const budgetOfPattern = /budget\s*(?:of|is|:)?\s*(?:rs\.?|inr|₹|\$)?\s*(\d[\d,]*)\s*(k|rupees|rs|inr)?/i;
-    const roughPricePattern = /(?:rs\.?|inr|₹|\$)\s*(\d[\d,]*)\s*(k)?/i;
-
-    let amount = null;
-    let currency = 'usd';
-
-    let m = t.match(underPatterns[0]) || t.match(budgetOfPattern) || t.match(roughPricePattern);
-    if (m) {
-      let raw = m[1].replace(/,/g, '');
-      let num = parseInt(raw, 10);
-      const suffix = (m[2] || '').toLowerCase();
-      if (suffix === 'k') num *= 1000;
-      if (suffix === 'rupees' || suffix === 'rs' || suffix === 'inr' || /₹|inr|rupees|rs\.?/.test(t.slice(Math.max(0, m.index - 6), m.index))) {
-        currency = 'inr';
-      }
-      amount = num;
+  function taxonomyDebugLog(...args) {
+    if (window.ScribbleConfig && window.ScribbleConfig.DEBUG) {
+      console.log('[Scribble/taxonomy]', ...args);
     }
+  }
 
-    if (amount === null) return 'unknown';
+  // Trailing words that disqualify an otherwise-matching number from being a
+  // price: "under 500-700 miles" or "below 300 mAh" are specs, not budgets.
+  // Checked against the token immediately following the number/number-range.
+  const DISQUALIFYING_UNITS = new Set([
+    'mile', 'miles', 'km', 'kilometer', 'kilometers', 'kilometre', 'kilometres',
+    'mah', 'gb', 'gbs', 'mb', 'tb', 'kg', 'kgs', 'lb', 'lbs',
+    'hour', 'hours', 'hr', 'hrs', 'minute', 'minutes', 'min', 'mins',
+    'day', 'days', 'week', 'weeks', 'month', 'months', 'year', 'years',
+    'calorie', 'calories', 'cal', 'cals', 'watt', 'watts', 'w',
+    'step', 'steps', 'mph', 'fps', 'rpm', 'ml', 'oz', 'g', 'mg',
+    'people', 'users', 'reviews', 'stars', 'times', 'x'
+  ]);
 
-    // Normalize INR to a rough USD-equivalent band using a static approximate
-    // rate so band thresholds stay meaningful without a network call.
+  function bandFromAmount(amount, currency) {
+    // Normalize INR to a rough USD-equivalent band using a static
+    // approximate rate so band thresholds stay meaningful without a
+    // network call.
     const usdEquivalent = currency === 'inr' ? amount / 83 : amount;
-
     if (usdEquivalent < 50) return 'under_50';
     if (usdEquivalent < 150) return '50_150';
     if (usdEquivalent < 500) return '150_500';
     return '500_plus';
+  }
+
+  // Budget band parsing: enumerated bands, USD + basic INR handling.
+  // Bands: under_50, 50_150, 150_500, 500_plus, unknown
+  //
+  // Scoped to userText only -- the assistant's response frequently contains
+  // unrelated numbers (spec sheets, mileage, battery life) that read like a
+  // price out of context. A shopper's own budget only ever appears in what
+  // they typed.
+  function extractBudgetBand(userText) {
+    const t = (userText || '').toLowerCase();
+    taxonomyDebugLog('budget: parsing source=userText, length', t.length);
+
+    // Each candidate group requires an adjacent currency/budget signal
+    // ($, USD, Rs, rupees, ₹, "budget", "under", "below", etc.) and captures
+    // an optional number range plus the trailing token, so "500-700 miles"
+    // can be rejected even though "500" alone would otherwise look like a
+    // price band.
+    const patternGroups = [
+      {
+        name: 'under/below/max',
+        regex: /(?:under|below|less than|no more than|max(?:imum)?(?: of)?)\s*(?:rs\.?|inr|₹|\$)?\s*(\d[\d,]*)(?:\s*(?:-|to)\s*\d[\d,]*)?\s*(k|rupees|rs|inr)?\s*([a-z]+)?/gi
+      },
+      {
+        name: 'budget of',
+        regex: /budget\s*(?:of|is|:)?\s*(?:rs\.?|inr|₹|\$)?\s*(\d[\d,]*)(?:\s*(?:-|to)\s*\d[\d,]*)?\s*(k|rupees|rs|inr)?\s*([a-z]+)?/gi
+      },
+      {
+        name: 'currency symbol',
+        regex: /(?:rs\.?|inr|₹|\$)\s*(\d[\d,]*)(?:\s*(?:-|to)\s*\d[\d,]*)?\s*(k)?\s*([a-z]+)?/gi
+      }
+    ];
+
+    for (const group of patternGroups) {
+      group.regex.lastIndex = 0;
+      let match;
+      while ((match = group.regex.exec(t)) !== null) {
+        const trailingWord = (match[3] || '').toLowerCase();
+        if (DISQUALIFYING_UNITS.has(trailingWord)) {
+          taxonomyDebugLog('budget: rejected candidate, pattern=', group.name, 'trailing unit=', trailingWord);
+          continue;
+        }
+
+        const raw = match[1].replace(/,/g, '');
+        let amount = parseInt(raw, 10);
+        const suffix = (match[2] || '').toLowerCase();
+        if (suffix === 'k') amount *= 1000;
+
+        let currency = 'usd';
+        if (
+          suffix === 'rupees' || suffix === 'rs' || suffix === 'inr' ||
+          /₹|inr|rupees|rs\.?/.test(t.slice(Math.max(0, match.index - 6), match.index))
+        ) {
+          currency = 'inr';
+        }
+
+        const band = bandFromAmount(amount, currency);
+        taxonomyDebugLog('budget: matched pattern=', group.name, 'amount=', amount, currency, '-> band=', band);
+        return band;
+      }
+    }
+
+    taxonomyDebugLog('budget: no valid pattern matched, band=unknown');
+    return 'unknown';
   }
 
   // Blocked categories: checked first, short-circuit everything to null.

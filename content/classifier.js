@@ -102,7 +102,10 @@
     }
 
     const top = scored[0];
-    const budget_band = window.ScribbleTaxonomy.extractBudgetBand(combined);
+    // Budget parsing is scoped to userText only (see taxonomy.js) -- the
+    // assistant's response text is excluded here even though it's part of
+    // `combined` for category scoring above.
+    const budget_band = window.ScribbleTaxonomy.extractBudgetBand(userText);
 
     debugLog('classified:', top.category, 'confidence:', top.confidence, 'budget_band:', budget_band);
 
