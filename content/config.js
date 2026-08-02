@@ -7,7 +7,16 @@
 // to change.
 
 (function () {
+  // Build stamp: bump this on every content-script change. Logged
+  // unconditionally (the one deliberate exception to "DEBUG gates every
+  // log" below) so a stale reload after an edit is caught by eye in the
+  // console immediately, instead of silently debugging the wrong build.
+  const VERSION = 'v0.3';
+  console.log('[Scribble] ' + VERSION);
+
   window.ScribbleConfig = {
+    VERSION,
+
     // Set true only for local debugging. Gates every diagnostic console.log
     // in the extension. Must ship false -- production paths never log page
     // content, and this flag governs the only logging that exists at all.

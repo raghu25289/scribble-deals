@@ -81,7 +81,11 @@
 
     if (scored.length === 0 && nearMisses.length && window.ScribbleConfig && window.ScribbleConfig.DEBUG) {
       nearMisses.sort((a, b) => b.points - a.points);
-      debugLog('near-miss categories (below threshold):', nearMisses.slice(0, 3));
+      // One flat string, not an array-of-objects -- console renders the
+      // latter as a collapsed/expandable tree, which defeats "glance at
+      // the log and see the gap" during taxonomy tuning.
+      const topLine = nearMisses.slice(0, 3).map((nm) => `${nm.category}=${nm.points}`).join(', ');
+      debugLog('near-miss categories (below threshold): ' + topLine);
     }
 
     return scored;
@@ -113,13 +117,14 @@
     // Budget parsing is scoped to userText only (see taxonomy.js) -- the
     // assistant's response text is excluded here even though it's part of
     // `combined` for category scoring above.
-    const budget_band = window.ScribbleTaxonomy.extractBudgetBand(userText);
+    const { budget_band, inr_band } = window.ScribbleTaxonomy.extractBudgetBand(userText);
 
-    debugLog('classified:', top.category, 'confidence:', top.confidence, 'budget_band:', budget_band);
+    debugLog('classified:', top.category, 'confidence:', top.confidence, 'budget_band:', budget_band, 'inr_band:', inr_band);
 
     return {
       category: top.category,
       budget_band,
+      inr_band,
       confidence: top.confidence
     };
   }

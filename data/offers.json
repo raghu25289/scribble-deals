@@ -273,5 +273,93 @@
     "url": "https://example.com/aff/fully-jarvis-desk",
     "sponsored": true,
     "value_score": 69
+  },
+  {
+    "id": "off-026",
+    "category": "baby.nursery",
+    "merchant": "FirstCry",
+    "title": "LuvLap baby bassinet with mosquito net",
+    "discount_text": "15% off + free shipping",
+    "code": "FCBASSINET15",
+    "url": "https://example.com/aff/firstcry-bassinet",
+    "sponsored": false,
+    "value_score": 82
+  },
+  {
+    "id": "off-027",
+    "category": "baby.nursery",
+    "merchant": "Amazon India",
+    "title": "Chicco 3-in-1 travel stroller",
+    "discount_text": "₹1,500 off",
+    "code": "AMZSTROLLER",
+    "url": "https://example.com/aff/amazonin-stroller",
+    "sponsored": true,
+    "value_score": 68
+  },
+  {
+    "id": "off-028",
+    "category": "baby.care",
+    "merchant": "FirstCry",
+    "title": "Pampers All Round Protection diapers, pack of 100",
+    "discount_text": "20% off + free shipping",
+    "code": "FCDIAPER20",
+    "url": "https://example.com/aff/firstcry-diapers",
+    "sponsored": false,
+    "value_score": 85
+  },
+  {
+    "id": "off-029",
+    "category": "baby.care",
+    "merchant": "Amazon India",
+    "title": "Philips Avent baby bottle sterilizer",
+    "discount_text": "₹400 off",
+    "code": "AMZSTER400",
+    "url": "https://example.com/aff/amazonin-sterilizer",
+    "sponsored": false,
+    "value_score": 76
+  },
+  {
+    "id": "off-030",
+    "category": "maternity.apparel",
+    "merchant": "Nykaa Fashion",
+    "title": "Maternity wrap dress, breastfeeding friendly",
+    "discount_text": "30% off",
+    "code": "MOM30",
+    "url": "https://example.com/aff/nykaa-maternity-dress",
+    "sponsored": false,
+    "value_score": 79
+  },
+  {
+    "id": "off-031",
+    "category": "maternity.apparel",
+    "merchant": "Amazon India",
+    "title": "Over-the-belly maternity jeans",
+    "discount_text": "₹600 off",
+    "code": "MOMJEANS",
+    "url": "https://example.com/aff/amazonin-maternity-jeans",
+    "sponsored": true,
+    "value_score": 63
+  },
+  {
+    "id": "off-032",
+    "category": "fashion.general",
+    "merchant": "Nordstrom",
+    "title": "Designer tailored dress shirt",
+    "discount_text": "25% off",
+    "code": "STYLE25",
+    "url": "https://example.com/aff/nordstrom-dressshirt",
+    "sponsored": false,
+    "value_score": 80
+  },
+  {
+    "id": "off-033",
+    "category": "fashion.general",
+    "merchant": "Everlane",
+    "title": "Classic straight-leg jeans",
+    "discount_text": "20% off",
+    "code": "DENIM20",
+    "url": "https://example.com/aff/everlane-jeans",
+    "sponsored": false,
+    "value_score": 77
   }
 ]

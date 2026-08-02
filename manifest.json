@@ -19,9 +19,9 @@
         "https://chatgpt.com/*"
       ],
       "js": [
+        "content/config.js",
         "content/taxonomy.js",
         "content/classifier.js",
-        "content/config.js",
         "content/adapters/chatgpt.js",
         "content/adapters/claude.js",
         "content/adapters/google.js",
@@ -38,9 +38,9 @@
         "https://claude.ai/*"
       ],
       "js": [
+        "content/config.js",
         "content/taxonomy.js",
         "content/classifier.js",
-        "content/config.js",
         "content/adapters/chatgpt.js",
         "content/adapters/claude.js",
         "content/adapters/google.js",
@@ -57,9 +57,9 @@
         "https://www.google.com/search*"
       ],
       "js": [
+        "content/config.js",
         "content/taxonomy.js",
         "content/classifier.js",
-        "content/config.js",
         "content/adapters/chatgpt.js",
         "content/adapters/claude.js",
         "content/adapters/google.js",
@@ -76,9 +76,9 @@
         "https://www.perplexity.ai/*"
       ],
       "js": [
+        "content/config.js",
         "content/taxonomy.js",
         "content/classifier.js",
-        "content/config.js",
         "content/adapters/chatgpt.js",
         "content/adapters/claude.js",
         "content/adapters/google.js",
@@ -95,9 +95,9 @@
         "https://gemini.google.com/*"
       ],
       "js": [
+        "content/config.js",
         "content/taxonomy.js",
         "content/classifier.js",
-        "content/config.js",
         "content/adapters/chatgpt.js",
         "content/adapters/claude.js",
         "content/adapters/google.js",

@@ -25,6 +25,26 @@
   ];
   const DESIGNER_GARMENT_PHRASES = DESIGNER_GARMENT_NOUNS.map((noun) => `designer ${noun}`);
 
+  // "baby <thing>" combinator for the nursery/care verticals -- same
+  // rationale as designer+garment above. "baby monitor" is listed
+  // separately since it already contains the word "baby".
+  const BABY_NURSERY_NOUNS = ['bassinet', 'cradle', 'crib', 'cot', 'stroller', 'pram', 'car seat', 'high chair'];
+  const BABY_NURSERY_PHRASES = BABY_NURSERY_NOUNS.map((noun) => `baby ${noun}`);
+
+  const BABY_CARE_NOUNS = ['diapers', 'diaper', 'food', 'bottles', 'bottle', 'sterilizer'];
+  const BABY_CARE_PHRASES = BABY_CARE_NOUNS.map((noun) => `baby ${noun}`);
+
+  // "maternity <garment>" / "pregnancy <garment>" combinator. NOTE: any
+  // phrase built from the "pregnancy" qualifier is effectively unreachable
+  // today -- BLOCKED.health (untouched per instructions) already contains
+  // the bare words "pregnant"/"pregnancy" and is checked before category
+  // scoring ever runs, so those specific phrasings get silenced upstream
+  // regardless of shopping intent. The "maternity" qualifier is unaffected
+  // and works normally. Flagging this rather than leaving it implicit.
+  const MATERNITY_QUALIFIERS = ['maternity', 'pregnancy'];
+  const MATERNITY_GARMENT_NOUNS = ['dress', 'dresses', 'jeans', 'leggings', 'tops', 'wear', 'clothes', 'clothing'];
+  const MATERNITY_PHRASES = MATERNITY_QUALIFIERS.flatMap((q) => MATERNITY_GARMENT_NOUNS.map((noun) => `${q} ${noun}`));
+
   const CATEGORIES = {
     'footwear.running': {
       keywords: ['sneaker', 'sneakers', 'running shoe', 'running shoes', 'trainers', 'trail shoe'],
@@ -209,9 +229,23 @@
       phrases: ['best dog food for'],
       negative: []
     },
-    'baby.gear': {
-      keywords: ['stroller', 'car seat', 'baby monitor', 'crib'],
-      phrases: ['best stroller for'],
+    // Replaces the old 'baby.gear' (superseded -- same core keywords, wider
+    // coverage, and now has matching catalog offers instead of being an
+    // orphan category).
+    'baby.nursery': {
+      keywords: ['bassinet', 'cradle', 'crib', 'cot', 'stroller', 'pram', 'car seat', 'baby monitor', 'high chair'],
+      phrases: [...BABY_NURSERY_PHRASES, 'baby monitor', 'best stroller for'],
+      negative: []
+    },
+    'baby.care': {
+      keywords: ['diaper', 'diapers', 'bottle', 'bottles', 'sterilizer'],
+      phrases: [...BABY_CARE_PHRASES, 'best diapers for'],
+      negative: []
+    },
+    'maternity.apparel': {
+      keywords: [],
+      phrases: MATERNITY_PHRASES,
+      secondary: ['maternity', 'pregnancy'],
       negative: []
     },
     'outdoors.camping': {
@@ -276,34 +310,65 @@
     return '500_plus';
   }
 
+  // INR gets its own band scale rather than being squeezed into the USD
+  // bands above -- "1k_5k" means something to an India-market shopper that
+  // "150_500" (USD-equivalent) doesn't. Only populated when the query's
+  // currency signal actually resolved to INR; otherwise 'unknown'.
+  function inrBandFromAmount(amount, currency) {
+    if (currency !== 'inr') return 'unknown';
+    if (amount < 1000) return 'under_1k';
+    if (amount <= 5000) return '1k_5k';
+    if (amount <= 20000) return '5k_20k';
+    return '20k_plus';
+  }
+
+  function isInrMarker(marker) {
+    return !!marker && /rs\.?|inr|₹|rupees/i.test(marker);
+  }
+
   // Budget band parsing: enumerated bands, USD + basic INR handling.
-  // Bands: under_50, 50_150, 150_500, 500_plus, unknown
+  // budget_band: under_50, 50_150, 150_500, 500_plus, unknown (USD-equivalent)
+  // inr_band: under_1k, 1k_5k, 5k_20k, 20k_plus, unknown (raw INR scale)
   //
   // Scoped to userText only -- the assistant's response frequently contains
   // unrelated numbers (spec sheets, mileage, battery life) that read like a
   // price out of context. A shopper's own budget only ever appears in what
-  // they typed.
+  // they typed. Requires an adjacent currency/budget signal ($, USD, Rs,
+  // ₹, rupees, "budget", "under", "below") -- a bare number never matches.
   function extractBudgetBand(userText) {
     const t = (userText || '').toLowerCase();
     taxonomyDebugLog('budget: parsing source=userText, length', t.length);
 
-    // Each candidate group requires an adjacent currency/budget signal
-    // ($, USD, Rs, rupees, ₹, "budget", "under", "below", etc.) and captures
-    // an optional number range plus the trailing token, so "500-700 miles"
-    // can be rejected even though "500" alone would otherwise look like a
-    // price band.
+    const NUM = '(\\d[\\d,]*)(?:\\s*(?:-|to)\\s*\\d[\\d,]*)?';
+    const K = '(k)?';
+    const PREFIX = '(rs\\.?|inr|₹|\\$)';
+    const SUFFIX = '(rs\\.?|inr|rupees)';
+    const TRAIL = '([a-z]+)?';
+
+    // Trigger groups (under/below/budget-of) allow an OPTIONAL currency
+    // marker on either side of the number -- the trigger word itself is
+    // signal enough. Bare-currency groups require the marker, since without
+    // a trigger word a plain number is never a budget on its own.
     const patternGroups = [
       {
         name: 'under/below/max',
-        regex: /(?:under|below|less than|no more than|max(?:imum)?(?: of)?)\s*(?:rs\.?|inr|₹|\$)?\s*(\d[\d,]*)(?:\s*(?:-|to)\s*\d[\d,]*)?\s*(k|rupees|rs|inr)?\s*([a-z]+)?/gi
+        regex: new RegExp(`(?:under|below|less than|no more than|max(?:imum)?(?: of)?)\\s*${PREFIX}?\\s*${NUM}\\s*${K}\\s*${SUFFIX}?\\s*${TRAIL}`, 'gi'),
+        extract: (m) => ({ amountRaw: m[2], kSuffix: m[3], currencyMarker: m[1] || m[4], trailingWord: m[5] })
       },
       {
         name: 'budget of',
-        regex: /budget\s*(?:of|is|:)?\s*(?:rs\.?|inr|₹|\$)?\s*(\d[\d,]*)(?:\s*(?:-|to)\s*\d[\d,]*)?\s*(k|rupees|rs|inr)?\s*([a-z]+)?/gi
+        regex: new RegExp(`budget\\s*(?:of|is|:)?\\s*${PREFIX}?\\s*${NUM}\\s*${K}\\s*${SUFFIX}?\\s*${TRAIL}`, 'gi'),
+        extract: (m) => ({ amountRaw: m[2], kSuffix: m[3], currencyMarker: m[1] || m[4], trailingWord: m[5] })
       },
       {
-        name: 'currency symbol',
-        regex: /(?:rs\.?|inr|₹|\$)\s*(\d[\d,]*)(?:\s*(?:-|to)\s*\d[\d,]*)?\s*(k)?\s*([a-z]+)?/gi
+        name: 'bare currency prefix',
+        regex: new RegExp(`${PREFIX}\\s*${NUM}\\s*${K}\\s*${TRAIL}`, 'gi'),
+        extract: (m) => ({ amountRaw: m[2], kSuffix: m[3], currencyMarker: m[1], trailingWord: m[4] })
+      },
+      {
+        name: 'bare currency suffix',
+        regex: new RegExp(`${NUM}\\s*${K}\\s*${SUFFIX}\\s*${TRAIL}`, 'gi'),
+        extract: (m) => ({ amountRaw: m[1], kSuffix: m[2], currencyMarker: m[3], trailingWord: m[4] })
       }
     ];
 
@@ -311,33 +376,30 @@
       group.regex.lastIndex = 0;
       let match;
       while ((match = group.regex.exec(t)) !== null) {
-        const trailingWord = (match[3] || '').toLowerCase();
-        if (DISQUALIFYING_UNITS.has(trailingWord)) {
-          taxonomyDebugLog('budget: rejected candidate, pattern=', group.name, 'trailing unit=', trailingWord);
+        const { amountRaw, kSuffix, currencyMarker, trailingWord } = group.extract(match);
+        const trailing = (trailingWord || '').toLowerCase();
+        if (DISQUALIFYING_UNITS.has(trailing)) {
+          taxonomyDebugLog('budget: rejected candidate, pattern=', group.name, 'trailing unit=', trailing);
           continue;
         }
 
-        const raw = match[1].replace(/,/g, '');
-        let amount = parseInt(raw, 10);
-        const suffix = (match[2] || '').toLowerCase();
-        if (suffix === 'k') amount *= 1000;
+        let amount = parseInt(amountRaw.replace(/,/g, ''), 10);
+        if (kSuffix) amount *= 1000;
 
-        let currency = 'usd';
-        if (
-          suffix === 'rupees' || suffix === 'rs' || suffix === 'inr' ||
-          /₹|inr|rupees|rs\.?/.test(t.slice(Math.max(0, match.index - 6), match.index))
-        ) {
-          currency = 'inr';
-        }
+        const currency = isInrMarker(currencyMarker) ? 'inr' : 'usd';
+        const budget_band = bandFromAmount(amount, currency);
+        const inr_band = inrBandFromAmount(amount, currency);
 
-        const band = bandFromAmount(amount, currency);
-        taxonomyDebugLog('budget: matched pattern=', group.name, 'amount=', amount, currency, '-> band=', band);
-        return band;
+        taxonomyDebugLog(
+          'budget: matched pattern=', group.name, 'amount=', amount, currency,
+          '-> budget_band=', budget_band, 'inr_band=', inr_band
+        );
+        return { budget_band, inr_band };
       }
     }
 
-    taxonomyDebugLog('budget: no valid pattern matched, band=unknown');
-    return 'unknown';
+    taxonomyDebugLog('budget: no valid pattern matched');
+    return { budget_band: 'unknown', inr_band: 'unknown' };
   }
 
   // Blocked categories: checked first, short-circuit everything to null.
