@@ -4,6 +4,12 @@
 // DEBUG gate: when window.ScribbleConfig.DEBUG is true, this module logs
 // category/blocked decisions (never raw conversation text) to help tune
 // selectors and patterns. DEBUG defaults to false in config.js.
+//
+// v1 (trigger-taxonomy-v1.md): a category firing now requires BOTH a
+// category-pattern score clearing threshold AND at least one purchase-
+// intent signal (Section 2 of the doc) -- category nouns inside
+// informational framing ("how does X work") no longer fire just because
+// the noun matched.
 
 (function () {
   function debugLog(...args) {
@@ -30,43 +36,52 @@
     return null;
   }
 
-  function scoreCategories(text) {
+  function scoreCategories(text, dealSeekingBonus) {
     const { CATEGORIES } = window.ScribbleTaxonomy;
     const scored = [];
-
     const nearMisses = [];
 
     for (const [name, def] of Object.entries(CATEGORIES)) {
+      // P1/P2 stubs have enabled:false and empty pattern arrays, so they'd
+      // never score anyway -- this is a defensive, explicit skip in case a
+      // future edit adds patterns without flipping the flag.
+      if (!def.enabled) continue;
+
       // Negative patterns veto this category outright.
       if (def.negative && def.negative.some((neg) => wordBoundaryMatch(text, neg))) {
         continue;
       }
 
-      // Weighted hit total: keyword/phrase hits count as a full point,
-      // `secondary` (brand-adjacent, generic) signals count as half a
-      // point -- strong enough to tip a borderline match, never enough
-      // alone to clear the two-point threshold.
+      // Weighted hit total: pattern hits count as a full point each.
+      // Multi-word patterns (containing a space) ALSO satisfy the
+      // threshold alone, same as v0.3's phrase-bypass -- see the SCOPE
+      // NOTE at the top of taxonomy.js for why. `secondary` (brand-
+      // adjacent, generic) signals count as half a point -- strong enough
+      // to tip a borderline match, never enough alone.
       let points = 0;
       let strongPhraseHit = false;
 
-      for (const kw of def.keywords || []) {
-        if (wordBoundaryMatch(text, kw)) points += 1;
-      }
-      for (const phrase of def.phrases || []) {
-        if (wordBoundaryMatch(text, phrase)) {
+      for (const pattern of def.patterns || []) {
+        if (wordBoundaryMatch(text, pattern)) {
           points += 1;
-          strongPhraseHit = true;
+          if (pattern.includes(' ')) strongPhraseHit = true;
         }
       }
       for (const secondary of def.secondary || []) {
         if (wordBoundaryMatch(text, secondary)) points += 0.5;
       }
 
+      // Deal-seeking language ("cheapest", "coupon", ...) is the
+      // highest-value intent signal -- it also nudges every category's
+      // score, which can be enough to tip a borderline match over
+      // threshold when combined with a real pattern hit.
+      if (dealSeekingBonus) points += 0.5;
+
       if (points === 0) continue;
 
       // Threshold: at least two points worth of independent pattern hits,
-      // OR one strong phrase match. Confidence scales gently with extra
-      // points, capped.
+      // OR one strong (multi-word) pattern match. Confidence scales gently
+      // with extra points, capped.
       const meetsThreshold = points >= 2 || strongPhraseHit;
       if (!meetsThreshold) {
         nearMisses.push({ category: name, points });
@@ -107,9 +122,36 @@
       return null;
     }
 
-    const scored = scoreCategories(combined);
+    // Intent signals are scoped to userText only, same rationale as
+    // budget parsing -- the shopper's own framing lives in what they
+    // typed, not the assistant's response.
+    const intent = window.ScribbleTaxonomy.detectIntentSignals(userText || '');
+    const intentLine = intent.signals.length ? intent.signals.join(', ') : '(none)';
+    debugLog('intent signals matched: ' + intentLine);
+
+    const scored = scoreCategories(combined, intent.dealSeeking);
     if (scored.length === 0) {
       debugLog('no category met threshold, returning null');
+      return null;
+    }
+
+    if (scored.length > 1) {
+      const runnersUp = scored.slice(1, 4).map((s) => `${s.category}=${s.points}`).join(', ');
+      debugLog('multi-category hit, runners-up: ' + runnersUp + ' (panel shows only the top category)');
+    }
+
+    // Informational framing ("how does X work") silences even a clean
+    // category match -- checked after scoring (so the runner-up log above
+    // still fires for tuning visibility) but before anything is returned.
+    if (intent.informationalSuppressed) {
+      debugLog('informational framing detected, suppressing despite category match:', scored[0].category);
+      return null;
+    }
+
+    // The intent gate: category score alone is never enough. Silence is
+    // the default whenever there is doubt.
+    if (intent.signals.length === 0) {
+      debugLog('category matched but no purchase-intent signal present, staying silent:', scored[0].category);
       return null;
     }
 

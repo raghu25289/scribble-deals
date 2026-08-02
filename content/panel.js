@@ -29,58 +29,17 @@
     }
   }
 
-  // Category slug -> human display name. Anything not listed here falls
-  // back to humanizeCategory() below, so a new taxonomy category never
-  // renders a raw dotted slug.
-  const CATEGORY_DISPLAY_NAMES = {
-    'footwear.running': 'running shoes',
-    'footwear.casual': 'casual shoes',
-    'electronics.laptops': 'laptops',
-    'electronics.headphones': 'headphones',
-    'electronics.tvs': 'TVs',
-    'electronics.smartphones': 'smartphones',
-    'electronics.cameras': 'cameras',
-    'electronics.smartwatches': 'smartwatches',
-    'electronics.tablets': 'tablets',
-    'electronics.gaming': 'gaming gear',
-    'travel.flights': 'flights',
-    'travel.hotels': 'hotels',
-    'travel.luggage': 'luggage',
-    'travel.carrental': 'car rentals',
-    'fitness.equipment': 'fitness equipment',
-    'fitness.apparel': 'workout apparel',
-    'home.mattresses': 'mattresses',
-    'home.furniture': 'furniture',
-    'home.kitchen': 'kitchen gear',
-    'home.cleaning': 'cleaning gear',
-    'home.bedding': 'bedding',
-    'fashion.general': 'fashion',
-    'fashion.watches': 'watches',
-    'beauty.skincare': 'skincare',
-    'beauty.haircare': 'haircare',
-    'beauty.makeup': 'makeup',
-    'software.vpn': 'VPNs',
-    'software.crm': 'CRM software',
-    'software.antivirus': 'antivirus',
-    'software.productivity': 'productivity tools',
-    'software.designtools': 'design tools',
-    'food.delivery': 'food delivery',
-    'food.grocery': 'grocery delivery',
-    'food.coffee': 'coffee',
-    'pets.supplies': 'pet supplies',
-    'baby.nursery': 'baby gear',
-    'baby.care': 'baby care',
-    'maternity.apparel': 'maternity wear',
-    'outdoors.camping': 'camping gear',
-    'outdoors.cycling': 'cycling gear',
-    'automotive.accessories': 'car accessories',
-    'office.supplies': 'office supplies',
-    'toys.games': 'toys & games',
-    'garden.outdoor': 'garden & outdoor'
-  };
-
+  // Display names now live on the taxonomy category itself
+  // (window.ScribbleTaxonomy.CATEGORIES[slug].display_name) rather than a
+  // second map maintained here -- v1's taxonomy covers ~150 slugs
+  // (enabled and disabled), and a map duplicated across two files would
+  // drift the moment either one is edited without the other. The
+  // slug-humanizing fallback below only matters for a category that
+  // somehow isn't in the taxonomy at all.
   function humanizeCategory(slug) {
-    if (CATEGORY_DISPLAY_NAMES[slug]) return CATEGORY_DISPLAY_NAMES[slug];
+    const taxonomy = window.ScribbleTaxonomy;
+    const def = taxonomy && taxonomy.CATEGORIES && taxonomy.CATEGORIES[slug];
+    if (def && def.display_name) return def.display_name;
     const last = String(slug || '').split('.').pop() || '';
     return last.replace(/_/g, ' ');
   }
