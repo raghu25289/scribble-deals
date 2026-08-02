@@ -150,6 +150,20 @@
     // already in memory (or resolving).
     loadOffersOnce();
 
+    // shopping.general keyword match (v2.0): titles, merchants, and the
+    // matched offer's own category display name are all fair game -- a
+    // product token like "notion" should find a Notion offer even though
+    // no taxonomy category pattern mentions it by name.
+    function matchOffersByTokens(offers, tokens) {
+      if (!tokens.length) return [];
+      const { CATEGORIES } = window.ScribbleTaxonomy;
+      return offers.filter((o) => {
+        const displayName = (CATEGORIES[o.category] && CATEGORIES[o.category].display_name) || '';
+        const haystack = `${o.title} ${o.merchant} ${displayName}`.toLowerCase();
+        return tokens.some((t) => haystack.includes(t));
+      });
+    }
+
     async function handleClassification(result) {
       if (!result) {
         debugLog('classifier result: null (see [Scribble/classifier] log above for reason)');
@@ -171,10 +185,27 @@
       debugLog('classifier result:', result);
 
       const offers = await loadOffersOnce();
-      const matches = offers.filter((o) => o.category === result.category);
-      if (!matches.length) {
-        debugLog('panel render skipped: no catalog offers for category', result.category);
-        return;
+      let matches;
+
+      if (result.category === 'shopping.general') {
+        // Fallback path (v2.0): no specific taxonomy category matched, but
+        // a research signal + plausible product reference were present.
+        // Keyword-match the extracted product tokens against the catalog
+        // itself rather than any single category's pre-filtered slice --
+        // renders ONLY if a real offer matches; otherwise this is a
+        // no_inventory log line (the catalog roadmap), never a random
+        // unrelated panel.
+        matches = matchOffersByTokens(offers, result.matchedTokens || []);
+        if (!matches.length) {
+          debugLog('no_inventory: shopping.general found no catalog match for tokens: ' + (result.matchedTokens || []).join(', '));
+          return;
+        }
+      } else {
+        matches = offers.filter((o) => o.category === result.category);
+        if (!matches.length) {
+          debugLog('panel render skipped: no catalog offers for category', result.category);
+          return;
+        }
       }
 
       if (window.ScribblePanel.isDismissedThisSession()) {

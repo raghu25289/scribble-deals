@@ -5,11 +5,13 @@
 // category/blocked decisions (never raw conversation text) to help tune
 // selectors and patterns. DEBUG defaults to false in config.js.
 //
-// v1 (trigger-taxonomy-v1.md): a category firing now requires BOTH a
-// category-pattern score clearing threshold AND at least one purchase-
-// intent signal (Section 2 of the doc) -- category nouns inside
-// informational framing ("how does X work") no longer fire just because
-// the noun matched.
+// v2.0 (philosophy inversion): fire on product research, period. A
+// category needs a research signal to drop its threshold from 2 pattern
+// hits to 1 -- there is no longer a separate hard AND-gate that returns
+// null whenever no signal is present ("category matched but no intent
+// signal" no longer exists as its own rejection path). The taxonomy's
+// job is offer-matching now, not gatekeeping; the blocked list (checked
+// first, unchanged) is the only thing that still silences unconditionally.
 
 (function () {
   function debugLog(...args) {
@@ -36,15 +38,16 @@
     return null;
   }
 
-  function scoreCategories(text, dealSeekingBonus) {
+  function scoreCategories(text, hasResearchSignal, dealSeekingBonus) {
     const { CATEGORIES } = window.ScribbleTaxonomy;
     const scored = [];
     const nearMisses = [];
 
     for (const [name, def] of Object.entries(CATEGORIES)) {
-      // P1/P2 stubs have enabled:false and empty pattern arrays, so they'd
-      // never score anyway -- this is a defensive, explicit skip in case a
-      // future edit adds patterns without flipping the flag.
+      // shopping.general is a fallback reached only via classify()'s own
+      // logic below -- it never scores through the normal pattern loop
+      // (its patterns array is intentionally empty).
+      if (name === 'shopping.general') continue;
       if (!def.enabled) continue;
 
       // Negative patterns veto this category outright.
@@ -54,10 +57,8 @@
 
       // Weighted hit total: pattern hits count as a full point each.
       // Multi-word patterns (containing a space) ALSO satisfy the
-      // threshold alone, same as v0.3's phrase-bypass -- see the SCOPE
-      // NOTE at the top of taxonomy.js for why. `secondary` (brand-
-      // adjacent, generic) signals count as half a point -- strong enough
-      // to tip a borderline match, never enough alone.
+      // threshold alone regardless of point total (the strong-phrase
+      // bypass). `secondary` signals count as half a point.
       let points = 0;
       let strongPhraseHit = false;
 
@@ -71,18 +72,20 @@
         if (wordBoundaryMatch(text, secondary)) points += 0.5;
       }
 
-      // Deal-seeking language ("cheapest", "coupon", ...) is the
-      // highest-value intent signal -- it also nudges every category's
-      // score, which can be enough to tip a borderline match over
-      // threshold when combined with a real pattern hit.
+      // A research signal being present is itself worth a small scoring
+      // nudge (was "deal-seeking bonus" in v1.x, now folded into the
+      // broader "purchase" signal group) -- can be enough to tip a
+      // borderline match over threshold when combined with a real hit.
       if (dealSeekingBonus) points += 0.5;
 
       if (points === 0) continue;
 
-      // Threshold: at least two points worth of independent pattern hits,
-      // OR one strong (multi-word) pattern match. Confidence scales gently
-      // with extra points, capped.
-      const meetsThreshold = points >= 2 || strongPhraseHit;
+      // v2.0 threshold: 1 point when a research signal is present
+      // anywhere in the query, 2 points otherwise (same conservative bar
+      // as v1.x when there's no research framing at all). The
+      // strong-phrase bypass remains an always-available alternate path.
+      const requiredPoints = hasResearchSignal ? 1 : 2;
+      const meetsThreshold = points >= requiredPoints || strongPhraseHit;
       if (!meetsThreshold) {
         nearMisses.push({ category: name, points });
         continue;
@@ -96,9 +99,6 @@
 
     if (scored.length === 0 && nearMisses.length && window.ScribbleConfig && window.ScribbleConfig.DEBUG) {
       nearMisses.sort((a, b) => b.points - a.points);
-      // One flat string, not an array-of-objects -- console renders the
-      // latter as a collapsed/expandable tree, which defeats "glance at
-      // the log and see the gap" during taxonomy tuning.
       const topLine = nearMisses.slice(0, 3).map((nm) => `${nm.category}=${nm.points}`).join(', ');
       debugLog('near-miss categories (below threshold): ' + topLine);
     }
@@ -114,44 +114,62 @@
       return null;
     }
 
-    // Blocked topics short-circuit everything, even if shopping intent is
-    // also present. Silence is the default whenever there is doubt.
+    // Blocked topics short-circuit everything, even if research/purchase
+    // intent is also present. Silence is the default whenever there is
+    // doubt. Unchanged from v1.x -- this is the only remaining silencer.
     const blockedHit = checkBlocked(combined);
     if (blockedHit) {
       debugLog('blocked category matched, returning null:', blockedHit);
       return null;
     }
 
-    // Intent signals are scoped to userText only, same rationale as
+    // Research signals are scoped to userText only, same rationale as
     // budget parsing -- the shopper's own framing lives in what they
     // typed, not the assistant's response.
-    const intent = window.ScribbleTaxonomy.detectIntentSignals(userText || '');
-    const intentLine = intent.signals.length ? intent.signals.join(', ') : '(none)';
-    debugLog('intent signals matched: ' + intentLine);
+    const research = window.ScribbleTaxonomy.detectResearchSignal(userText || '');
+    const signalLine = research.signals.length ? research.signals.join(', ') : '(none)';
+    debugLog('research signals matched: ' + signalLine);
 
-    const scored = scoreCategories(combined, intent.dealSeeking);
-    if (scored.length === 0) {
-      debugLog('no category met threshold, returning null');
+    // Informational framing ("how does X work") still forces silence
+    // regardless of category score -- narrowed in v2.0 to clearly
+    // non-commercial framings only (see taxonomy.js).
+    if (research.informationalSuppressed) {
+      debugLog('informational framing detected, staying silent');
       return null;
     }
+
+    const scored = scoreCategories(combined, research.hasSignal, research.dealSeeking);
 
     if (scored.length > 1) {
       const runnersUp = scored.slice(1, 4).map((s) => `${s.category}=${s.points}`).join(', ');
       debugLog('multi-category hit, runners-up: ' + runnersUp + ' (panel shows only the top category)');
     }
 
-    // Informational framing ("how does X work") silences even a clean
-    // category match -- checked after scoring (so the runner-up log above
-    // still fires for tuning visibility) but before anything is returned.
-    if (intent.informationalSuppressed) {
-      debugLog('informational framing detected, suppressing despite category match:', scored[0].category);
-      return null;
-    }
-
-    // The intent gate: category score alone is never enough. Silence is
-    // the default whenever there is doubt.
-    if (intent.signals.length === 0) {
-      debugLog('category matched but no purchase-intent signal present, staying silent:', scored[0].category);
+    if (scored.length === 0) {
+      // No specific category cleared threshold. Try the shopping.general
+      // fallback: only when a research signal is present AND the query
+      // plausibly references a real product. This does NOT guarantee a
+      // render -- main.js still has to find a keyword-matched offer in
+      // the catalog, or it logs no_inventory and stays silent.
+      if (research.hasSignal) {
+        const originalText = userText || '';
+        if (window.ScribbleTaxonomy.hasPlausibleProductReference(originalText)) {
+          const rawTokens = window.ScribbleTaxonomy.extractProductTokens(originalText);
+          const safeTokens = rawTokens.filter((t) => !window.ScribbleTaxonomy.isBlockedToken(t));
+          if (safeTokens.length) {
+            debugLog('no specific category matched, trying shopping.general with tokens: ' + safeTokens.join(', '));
+            const { budget_band, inr_band } = window.ScribbleTaxonomy.extractBudgetBand(userText);
+            return {
+              category: 'shopping.general',
+              budget_band,
+              inr_band,
+              confidence: 0.6,
+              matchedTokens: safeTokens
+            };
+          }
+        }
+      }
+      debugLog('no category met threshold and no shopping.general fallback applies, returning null');
       return null;
     }
 

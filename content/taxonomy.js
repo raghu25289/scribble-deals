@@ -1,89 +1,110 @@
-// Taxonomy v1 (trigger-taxonomy-v1.md): shopping categories + intent
-// signals + the blocked topic list. Loaded as a plain script (no build
-// step), attaches itself to `window.ScribbleTaxonomy`.
+// Taxonomy v2.0: shopping categories + research signals + the blocked
+// topic list. Loaded as a plain script (no build step), attaches itself
+// to `window.ScribbleTaxonomy`.
 //
 // SCHEMA per category:
-//   enabled:       false = P1/P2, structural placeholder only (no patterns
-//                  written yet, per the doc's rollout tiers). true = P0,
-//                  built and live.
+//   enabled:       structural flag, kept in the schema per v2.0's own
+//                  instruction ("the enabled flag stays"), but as of v2.0
+//                  every category ships true except shopping.general's
+//                  sibling concerns (there are no blocked-adjacent
+//                  category stubs to disable -- see V2.0 NOTE 2 below).
 //   patterns:      full-weight (1 point each). Multi-word patterns (those
-//                  containing a space) ALSO satisfy the threshold alone,
-//                  same as v0.3's keywords/phrases split -- this is a
-//                  deliberate schema-mapping choice: the doc specifies one
-//                  unified `patterns` array, but "keep the existing
-//                  two-hit threshold" (explicit instruction) only works
-//                  for previously-tested strong compound phrases like
-//                  "designer shirt" if a multi-word match can still clear
-//                  threshold alone. Single-word patterns behave like v0.3
-//                  keywords: 1 point, need a second hit.
+//                  containing a space) ALSO satisfy the threshold alone
+//                  regardless of point total (the "strong phrase" bypass).
 //   secondary:     half-weight (0.5), never enough alone.
 //   negative:      any match here silences THIS category (not global).
-//   budget_scales: ['inr'], ['usd'], or ['inr','usd'] -- metadata only,
-//                  does not change parsing (extractBudgetBand always
-//                  computes both bands; this just documents which one is
-//                  the meaningful one for that vertical, for future UI/
-//                  telemetry use).
-//   display_name:  human label. Filled in for every slug, including
-//                  disabled ones, so the panel never has to fall back to
-//                  slug-humanizing once a P1/P2 category goes live.
+//   budget_scales: ['inr'], ['usd'], or ['inr','usd'] -- metadata only.
+//   display_name:  human label, filled in for every slug.
 //
 // NOTE: no finance categories here on purpose — personal finance is a
 // blocked topic (see BLOCKED below), not a shoppable category.
 //
 // ============================================================================
-// SCOPE NOTE -- read before extending this file. Several places in the
-// source spec (trigger-taxonomy-v1.md) are internally ambiguous or, in a
-// few spots, directly contradict either themselves or the build brief that
-// pointed at them. Rather than guess silently, here is exactly what was
-// decided and why, so the resolution is auditable instead of buried:
+// V1 SCOPE NOTE (kept for history -- still relevant to why some category
+// slugs/patterns look the way they do):
 //
-// 1. SECTION 3 vs SECTION 6 SCOPE: Section 3 tags whole verticals "(P0)"
-//    (all of footwear, all of fashion, all of electronics, etc) but
-//    Section 6's "Rollout priority" list narrows several of those to a
-//    specific subset ("fashion core: mens/womens/ethnic/accessories/
-//    watches/eyewear", "electronics core: phones/laptops/audio/tv/
-//    wearables/peripherals", "home core: mattresses/large appliances/
-//    kitchen appliances/furniture"). The build brief says "implement
-//    every P0 category from Section 6" -- Section 6 wins as authoritative
-//    wherever the two disagree. Concretely: fashion.activewear/
-//    winterwear/innerwear/kids/bags_luggage_fashion/jewelry_fashion/
-//    jewelry_fine, and electronics.tablets/cameras/gaming_hardware/
-//    pc_components/chargers_accessories/printers_scanners/storage/
-//    networking are all P1/P2 stubs under v1, EVEN THOUGH tablets/
-//    cameras/gaming were live, working categories in v0.3. This is a
-//    deliberate, documented narrowing, not an accidental regression.
+// 1. Section 3 vs Section 6 scope disagreements in the v1 doc were
+//    resolved in favor of Section 6 ("Rollout priority"). Irrelevant as of
+//    v2.0 -- every category is enabled now regardless of tier.
+// 2. home.smart_home shipped P0 early because a required test needed it.
+// 3. The v1 "near-miss for disabled P1 categories" contradiction doesn't
+//    apply anymore -- nothing is disabled-with-empty-patterns as of v2.0.
+// 4. Wedding routing: `negative: ['wedding']` on fashion.mens/womens/
+//    ethnic_mens/ethnic_womens, so wedding-worded apparel falls through to
+//    occasions.wedding's own patterns. Still true, still load-bearing.
+// 5. "7 days in Vietnam" fires travel.hotels (single-category rule), not
+//    "hotels + flights" plural. Still true.
 //
-// 2. HOME.SMART_HOME: absent from Section 6's narrow home list, but the
-//    build brief's own required test set explicitly needs "video doorbell"
-//    to fire home.smart_home. An explicit test requirement overrides the
-//    narrower rollout list, so home.smart_home ships as P0 here.
+// ============================================================================
+// V2.0 SCOPE NOTE -- the philosophy inversion. Read before extending.
 //
-// 3. THE "NEAR-MISS" CONTRADICTION for P1 categories (sunscreen ->
-//    beauty.skincare, whey -> fitness.nutrition, gold earrings ->
-//    fashion.jewelry_fine): the build brief says these should log as
-//    near-misses, but per item 1 above (and the brief's OWN instruction:
-//    "Create P1/P2 slugs with enabled:false and EMPTY pattern arrays --
-//    do not write their patterns now"), a category with zero patterns can
-//    mathematically never score any points, and therefore can never
-//    appear in a near-miss log either -- there is nothing to almost-match
-//    against. Resolution: these queries return null (observably silent),
-//    same as if the category didn't exist yet, and the test harness below
-//    asserts that plus an annotation of *why* (disabled P1, not blocked),
-//    rather than asserting a literal near-miss log line that the schema
-//    makes impossible to produce.
+// OLD MODEL (v1.x): fire only when a taxonomy category clears threshold
+// AND a purchase-intent signal is present. This missed whole verticals
+// until someone hand-wrote patterns for them (bassinet and payroll each
+// needed their own prompt to unlock). The taxonomy was a gatekeeper.
 //
-// 4. GIFTING WEDDING ROUTING: canonical-ownership says wedding-worded
-//    apparel routes to occasions.wedding over fashion.ethnic_*. Implemented
-//    via `negative: ['wedding']` on fashion.mens/womens/ethnic_mens/
-//    ethnic_womens, so a wedding-worded query structurally cannot fire
-//    those and falls through to occasions.wedding's own patterns.
+// NEW MODEL (v2.0): fire on product research, period. The taxonomy's job
+// is now offer-MATCHING, not gatekeeping -- the only thing that keeps
+// Scribble silent is the blocked list (unchanged, still checked first,
+// still short-circuits everything). Concretely, three mechanical changes:
 //
-// 5. "7 days in Vietnam under 60k" -> doc says "fires travel.hotels +
-//    flights" (plural). The build brief's OWN multi-category rule says
-//    return the single highest-scoring category, panel never mixes
-//    categories. The explicit single-category rule wins; this query fires
-//    ONE of travel.hotels/travel.flights (whichever scores higher --
-//    travel.hotels, since 'days in' lives there).
+// 1. RESEARCH SIGNALS (renamed from "intent signals", broadened
+//    vocabulary) -- a SINGLE signal now suffices, and its presence drops
+//    the per-category pattern threshold from 2 hits to 1 (see
+//    classifier.js). Informational suppressors narrowed to only the
+//    clearly non-commercial framings (how X works, history, homework,
+//    market-size/revenue, news) -- "review of X" is explicitly research
+//    now, not suppressed.
+//
+// 2. EVERY CATEGORY ENABLED. All 91 categories that were P1/P2 stubs
+//    (enabled:false, empty patterns) as of v1.1 now ship real patterns,
+//    written from the source doc's own Section 3 vocabulary lists.
+//    A handful of brand names that lived in `secondary` (half-weight) in
+//    v1.x were promoted to full-weight `patterns` here -- under the old
+//    model a bare brand mention needing a second corroborating hit made
+//    sense as a conservative gate; under the new model, a brand name
+//    itself IS the product reference, and with a research signal present
+//    (1-hit threshold) it should be sufficient alone. This is why, e.g.,
+//    footwear.running's patterns list now includes 'hoka', 'brooks', etc.
+//    directly instead of only in `secondary`.
+//
+// 3. shopping.general: a fallback category for real product research that
+//    doesn't cleanly match any specific taxonomy category (a product this
+//    taxonomy simply hasn't modeled yet, or won't ever model as its own
+//    vertical). It never scores through the normal pattern-matching path
+//    (see the `if (name === 'shopping.general') continue;` skip in
+//    classifier.js) -- it's reached ONLY as an explicit fallback in
+//    classify() when: (a) a research signal is present, (b) no specific
+//    category cleared threshold, and (c) the query contains a plausible
+//    product reference (a capitalized brand-like token, a model-number-
+//    looking token, a price mention, or just a concrete content word --
+//    deliberately permissive, see hasPlausibleProductReference() below).
+//    Reaching this fallback does NOT mean the panel renders: main.js then
+//    keyword-matches the extracted product tokens against offers.json
+//    titles/merchants/category display names, and the panel shows up
+//    ONLY if at least one offer actually matches. No match -> a
+//    `no_inventory` DEBUG line (the catalog roadmap) and silence. An
+//    irrelevant panel costs more trust than staying quiet, so this
+//    fallback is generous about ATTEMPTING a match and strict about
+//    actually rendering one.
+//
+// 4. NOTHING CHANGED IN THE BLOCKED LIST. Health commerce, finance
+//    products, gambling/real-money gaming, alcohol/tobacco/vapes, adult
+//    products, weapons, surveillance of people, funeral/grief commerce,
+//    minors-in-distress -- all identical to v1.1, checked first, still
+//    short-circuit everything including shopping.general (the blocked
+//    check runs on the full combined text before any category or
+//    fallback logic ever executes; shopping.general additionally
+//    cross-checks its own matched tokens against BLOCKED as defense in
+//    depth via isBlockedToken(), even though in practice nothing reaches
+//    that fallback with blocked content still present -- the primary
+//    check already caught it). There were never any blocked-adjacent
+//    category STUBS to begin with (personal_finance/gambling/etc. were
+//    always BLOCKED-list phrase groups, never taxonomy category slugs
+//    with their own offers) -- "structurally impossible beats
+//    configured-off" from the v1 doc already held, so there is nothing
+//    to remove here; this note exists to make that explicit rather than
+//    leave it implicit.
 // ============================================================================
 
 (function () {
@@ -118,13 +139,10 @@
   const FESTIVE_OCCASION_WORDS = ['diwali', 'rakhi', 'raksha bandhan'];
   const FESTIVE_OCCASION_GIFT_PHRASES = FESTIVE_OCCASION_WORDS.flatMap((occ) => GIFT_NOUNS.map((n) => `${occ} ${n}`));
 
-  // "best <product noun>" combinator for beauty.* -- a single beauty noun
-  // (lipstick, sunscreen, ...) is a single-word pattern and, per this
-  // file's scoring rules, needs a second hit to clear threshold on its
-  // own. Pairing each with "best" gives a genuine multi-word compound
-  // that satisfies threshold alone (same mechanic as "designer <garment>"
-  // above) AND doubles as the direct_ask intent signal -- one pattern
-  // satisfies both gates for the common "best X" phrasing.
+  // "best <product noun>" combinator -- a single product noun is a
+  // single-word pattern; pairing with "best" gives a multi-word compound
+  // that satisfies threshold alone via the strong-phrase bypass, and
+  // doubles as a research signal for the common "best X" phrasing.
   function bestNounPhrases(nouns) {
     return nouns.map((n) => `best ${n}`);
   }
@@ -135,27 +153,23 @@
   // globally since only beauty.* needs it.
   const BEAUTY_CLINICAL_NEGATIVES = ['acne treatment', 'dermatologist', 'prescription', 'hair loss treatment', 'pigmentation treatment'];
 
-  // ---- Stub factory for P1/P2 placeholders --------------------------------
-  // Structural placeholder only, per the doc: "Do not write their patterns
-  // now." Empty patterns mean these can never score (see SCOPE NOTE #3).
-  function stub(display_name, budget_scales) {
-    return { enabled: false, patterns: [], secondary: [], negative: [], budget_scales: budget_scales || ['inr', 'usd'], display_name };
-  }
-
   const CATEGORIES = {
-    // ================= FOOTWEAR (P0, all 9) =================
+    // ================= FOOTWEAR =================
     'footwear.running': {
       enabled: true,
-      patterns: ['running shoe', 'running shoes', 'trail running shoes', 'marathon shoes', 'jogging shoes', 'shoes for running'],
-      secondary: ['nike', 'adidas', 'asics', 'brooks', 'hoka', 'new balance'],
+      patterns: [
+        'running shoe', 'running shoes', 'trail running shoes', 'marathon shoes', 'jogging shoes', 'shoes for running',
+        'nike', 'adidas', 'asics', 'brooks', 'hoka', 'new balance'
+      ],
+      secondary: [],
       negative: [],
       budget_scales: ['inr', 'usd'],
       display_name: 'running shoes'
     },
     'footwear.sneakers': {
       enabled: true,
-      patterns: ['sneaker', 'sneakers', 'trainers', 'high top sneakers', 'low top sneakers'],
-      secondary: ['nike', 'adidas', 'jordan', 'converse', 'vans', 'puma'],
+      patterns: ['sneaker', 'sneakers', 'trainers', 'high top sneakers', 'low top sneakers', 'jordan', 'converse', 'vans', 'puma'],
+      secondary: ['nike', 'adidas'],
       negative: ['running'],
       budget_scales: ['inr', 'usd'],
       display_name: 'sneakers'
@@ -217,7 +231,7 @@
       display_name: 'boots & trekking shoes'
     },
 
-    // ================= FASHION (P0 core: mens/womens/ethnic/accessories/watches/eyewear) =================
+    // ================= FASHION =================
     'fashion.mens': {
       enabled: true,
       patterns: ['mens shirt', "men's shirt", 'mens jeans', "men's jeans", 'mens jacket', 'mens t-shirt', 'mens clothing', 'mens wear', 'mens trousers', ...DESIGNER_GARMENT_PHRASES],
@@ -274,15 +288,64 @@
       budget_scales: ['inr', 'usd'],
       display_name: 'eyewear'
     },
-    'fashion.activewear': stub('activewear', ['inr', 'usd']),
-    'fashion.winterwear': stub('winter wear', ['inr', 'usd']),
-    'fashion.innerwear': stub('innerwear', ['inr', 'usd']),
-    'fashion.kids': stub("kids' fashion", ['inr', 'usd']),
-    'fashion.bags_luggage_fashion': stub('bags', ['inr', 'usd']),
-    'fashion.jewelry_fashion': stub('fashion jewelry', ['inr', 'usd']),
-    'fashion.jewelry_fine': stub('fine jewelry', ['inr', 'usd']),
+    'fashion.activewear': {
+      enabled: true,
+      patterns: ['activewear', 'gym wear', 'workout clothes', 'yoga pants', 'sports bra', 'track pants', 'joggers'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'activewear'
+    },
+    'fashion.winterwear': {
+      enabled: true,
+      patterns: ['winter wear', 'winter jacket', 'sweater', 'sweatshirt', 'thermal wear', 'puffer jacket', 'woolen wear'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'winter wear'
+    },
+    'fashion.innerwear': {
+      enabled: true,
+      patterns: ['innerwear', 'undergarments', 'briefs', 'boxers', 'lingerie'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'innerwear'
+    },
+    'fashion.kids': {
+      enabled: true,
+      patterns: ['kids party wear', 'kids ethnic wear', 'kids fashion', 'kids designer wear'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: "kids' fashion"
+    },
+    'fashion.bags_luggage_fashion': {
+      enabled: true,
+      patterns: ['handbag', 'tote bag', 'fashion backpack', 'sling bag', 'clutch bag', 'crossbody bag'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'bags'
+    },
+    'fashion.jewelry_fashion': {
+      enabled: true,
+      patterns: ['fashion jewelry', 'imitation jewelry', 'silver jewelry', 'oxidised jewelry', 'artificial jewelry'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'fashion jewelry'
+    },
+    'fashion.jewelry_fine': {
+      enabled: true,
+      patterns: ['gold earrings', 'gold necklace', 'gold ring', 'diamond jewelry', 'fine jewelry', 'gold jewelry for wedding'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'fine jewelry'
+    },
 
-    // ================= ELECTRONICS (P0 core: phones/laptops/audio/tv/wearables/peripherals) =================
+    // ================= ELECTRONICS =================
     'electronics.phones': {
       enabled: true,
       patterns: ['smartphone', 'iphone', 'android phone', 'pixel phone', 'galaxy phone', 'best phone'],
@@ -301,7 +364,7 @@
     },
     'electronics.headphones_audio': {
       enabled: true,
-      patterns: ['headphones', 'earbuds', 'earphones', 'airpods', 'wireless earbuds', 'noise cancelling headphones', 'tws earbuds', 'bluetooth speaker', 'soundbar'],
+      patterns: ['headphones', 'earbuds', 'earphones', 'airpods', 'wireless earbuds', 'noise cancelling headphones', 'tws earbuds', 'bluetooth speaker', 'soundbar', 'speaker', 'sonos'],
       secondary: ['anc', 'bass'],
       negative: [],
       budget_scales: ['inr', 'usd'],
@@ -331,16 +394,72 @@
       budget_scales: ['inr', 'usd'],
       display_name: 'computer peripherals'
     },
-    'electronics.tablets': stub('tablets', ['inr', 'usd']),
-    'electronics.cameras': stub('cameras', ['inr', 'usd']),
-    'electronics.gaming_hardware': stub('gaming hardware', ['inr', 'usd']),
-    'electronics.pc_components': stub('PC components', ['inr', 'usd']),
-    'electronics.chargers_accessories': stub('chargers & accessories', ['inr', 'usd']),
-    'electronics.printers_scanners': stub('printers & scanners', ['inr', 'usd']),
-    'electronics.storage': stub('storage devices', ['inr', 'usd']),
-    'electronics.networking': stub('networking gear', ['inr', 'usd']),
+    'electronics.tablets': {
+      enabled: true,
+      patterns: ['tablet', 'ipad', 'galaxy tab', 'android tablet'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'tablets'
+    },
+    'electronics.cameras': {
+      enabled: true,
+      patterns: ['camera', 'dslr', 'mirrorless camera', 'gopro', 'action camera', 'camera lens', 'gimbal', 'drone camera'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'cameras'
+    },
+    'electronics.gaming_hardware': {
+      enabled: true,
+      patterns: ['gaming console', 'graphics card', 'gpu', 'gaming laptop', 'game controller', 'ps5', 'xbox', 'nintendo switch'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'gaming hardware'
+    },
+    'electronics.pc_components': {
+      enabled: true,
+      patterns: ['cpu processor', 'graphics card', 'ram module', 'ssd drive', 'motherboard', 'pc cabinet', 'power supply unit', 'psu'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'PC components'
+    },
+    'electronics.chargers_accessories': {
+      enabled: true,
+      patterns: ['power bank', 'phone charger', 'charging cable', 'phone case', 'screen guard', 'screen protector'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'chargers & accessories'
+    },
+    'electronics.printers_scanners': {
+      enabled: true,
+      patterns: ['printer', 'scanner', 'inkjet printer', 'laser printer', 'all in one printer'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'printers & scanners'
+    },
+    'electronics.storage': {
+      enabled: true,
+      patterns: ['hard disk', 'external hard drive', 'pen drive', 'usb drive', 'nas storage', 'ssd storage'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'storage devices'
+    },
+    'electronics.networking': {
+      enabled: true,
+      patterns: ['router', 'wifi router', 'mesh router', 'wifi extender', 'range extender'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'networking gear'
+    },
 
-    // ================= HOME (P0 core: mattresses/large appliances/kitchen appliances/furniture, plus smart_home per test requirement -- see SCOPE NOTE #2) =================
+    // ================= HOME =================
     'home.mattresses': {
       enabled: true,
       patterns: ['mattress', 'mattresses', 'memory foam mattress', 'orthopedic mattress', 'spring mattress'],
@@ -381,16 +500,72 @@
       budget_scales: ['inr', 'usd'],
       display_name: 'smart home devices'
     },
-    'home.cookware_dining': stub('cookware & dining', ['inr', 'usd']),
-    'home.decor': stub('home decor', ['inr', 'usd']),
-    'home.bedding_bath': stub('bedding & bath', ['inr', 'usd']),
-    'home.lighting': stub('lighting', ['inr', 'usd']),
-    'home.storage_organization': stub('storage & organization', ['inr', 'usd']),
-    'home.cleaning_devices': stub('cleaning devices', ['inr', 'usd']),
-    'home.tools_diy': stub('tools & DIY', ['inr', 'usd']),
-    'home.gardening': stub('gardening', ['inr', 'usd']),
+    'home.cookware_dining': {
+      enabled: true,
+      patterns: ['kadai', 'pressure cooker', 'tawa', 'dinner set', 'water bottle', 'tiffin box', 'lunch box set', 'cookware set'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'cookware & dining'
+    },
+    'home.decor': {
+      enabled: true,
+      patterns: ['curtains', 'rugs', 'wall art', 'artificial plants', 'planters', 'wall decor', 'home decor'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'home decor'
+    },
+    'home.bedding_bath': {
+      enabled: true,
+      patterns: ['bedsheets', 'comforter', 'pillows', 'towels', 'bed sheet set', 'duvet cover'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'bedding & bath'
+    },
+    'home.lighting': {
+      enabled: true,
+      patterns: ['table lamp', 'smart bulb', 'festive lights', 'led lights', 'floor lamp', 'ceiling light'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'lighting'
+    },
+    'home.storage_organization': {
+      enabled: true,
+      patterns: ['storage boxes', 'closet organizer', 'shoe rack', 'storage containers', 'wardrobe organizer'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'storage & organization'
+    },
+    'home.cleaning_devices': {
+      enabled: true,
+      patterns: ['vacuum cleaner', 'robot vacuum', 'steam mop', 'dyson', 'cordless vacuum', 'wet dry vacuum'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'cleaning devices'
+    },
+    'home.tools_diy': {
+      enabled: true,
+      patterns: ['drill machine', 'tool kit', 'screwdriver set', 'hammer', 'diy tools'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'tools & DIY'
+    },
+    'home.gardening': {
+      enabled: true,
+      patterns: ['garden tools', 'potting soil', 'gardening kit', 'plant fertilizer', 'garden hose'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'gardening'
+    },
 
-    // ================= BABY / KIDS (P0, full section) =================
+    // ================= BABY / KIDS =================
     'baby.nursery': {
       enabled: true,
       patterns: [...BABY_NURSERY_PHRASES, 'baby monitor', 'best stroller for'],
@@ -432,7 +607,7 @@
       display_name: 'school essentials'
     },
 
-    // ================= MATERNITY (P0, full section) =================
+    // ================= MATERNITY =================
     'maternity.apparel': {
       enabled: true,
       patterns: MATERNITY_PHRASES,
@@ -450,7 +625,7 @@
       display_name: 'maternity gear'
     },
 
-    // ================= TRAVEL (P0 core: hotels/flights/luggage) =================
+    // ================= TRAVEL =================
     'travel.hotels': {
       enabled: true,
       patterns: ['hotel', 'hotels', 'resort', 'hotel deals', 'best hotel in', 'book a hotel', 'where to stay in', 'days in'],
@@ -475,14 +650,56 @@
       budget_scales: ['inr', 'usd'],
       display_name: 'luggage'
     },
-    'travel.packages': stub('travel packages', ['inr', 'usd']),
-    'travel.trains_buses': stub('trains & buses', ['inr']),
-    'travel.car_rental_cabs': stub('car rental & cabs', ['inr', 'usd']),
-    'travel.gear': stub('travel gear', ['inr', 'usd']),
-    'travel.visa_services': stub('visa services', ['inr', 'usd']),
-    'travel.experiences': stub('travel experiences', ['inr', 'usd']),
+    'travel.packages': {
+      enabled: true,
+      patterns: ['honeymoon package', 'family travel package', 'europe tour package', 'holiday package'],
+      secondary: [],
+      negative: ['insurance'],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'travel packages'
+    },
+    'travel.trains_buses': {
+      enabled: true,
+      patterns: ['train ticket', 'irctc booking', 'bus ticket', 'redbus', 'train booking'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'trains & buses'
+    },
+    'travel.car_rental_cabs': {
+      enabled: true,
+      patterns: ['rental car', 'car rental', 'rent a car', 'cab booking', 'outstation cab'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'car rental & cabs'
+    },
+    'travel.gear': {
+      enabled: true,
+      patterns: ['travel pillow', 'travel adapter', 'packing organizers', 'travel accessories'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'travel gear'
+    },
+    'travel.visa_services': {
+      enabled: true,
+      patterns: ['visa filing service', 'tourist visa assistance', 'visa application service'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'visa services'
+    },
+    'travel.experiences': {
+      enabled: true,
+      patterns: ['guided tour', 'city tour booking', 'safari booking', 'theme park tickets', 'travel experiences'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'travel experiences'
+    },
 
-    // ================= SOFTWARE (P0 core: vpn/saas/ott/edtech) =================
+    // ================= SOFTWARE =================
     'software.vpn': {
       enabled: true,
       patterns: ['vpn', 'virtual private network', 'best vpn for', 'vpn deals'],
@@ -493,7 +710,7 @@
     },
     'software.productivity_saas': {
       enabled: true,
-      patterns: ['crm software', 'best crm for', 'project management tool', 'note taking app', 'productivity app', 'saas subscription'],
+      patterns: ['crm software', 'best crm for', 'project management tool', 'note taking app', 'productivity app', 'saas subscription', 'notion', 'asana', 'trello', 'monday.com', 'airtable', 'clickup'],
       secondary: [],
       negative: [],
       budget_scales: ['usd'],
@@ -527,25 +744,76 @@
       budget_scales: ['inr', 'usd'],
       display_name: 'HR & payroll software'
     },
-    'software.design_creative': stub('design & creative software', ['usd']),
-    'software.cloud_storage': stub('cloud storage', ['usd']),
-    'software.security_antivirus': stub('security & antivirus', ['usd']),
-    'software.hosting_domains': stub('hosting & domains', ['usd']),
-    'software.ai_tools': stub('AI tools', ['usd']),
-    'software.music_streaming': stub('music streaming', ['inr', 'usd']),
-    'software.gaming_subs': stub('gaming subscriptions', ['usd']),
-    'software.developer_tools': stub('developer tools', ['usd']),
+    'software.design_creative': {
+      enabled: true,
+      patterns: ['design software', 'video editing software', 'photo editing software', 'stock photos subscription', 'creative suite'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['usd'],
+      display_name: 'design & creative software'
+    },
+    'software.cloud_storage': {
+      enabled: true,
+      patterns: ['cloud storage', 'google drive storage', 'dropbox subscription', 'icloud storage'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['usd'],
+      display_name: 'cloud storage'
+    },
+    'software.security_antivirus': {
+      enabled: true,
+      patterns: ['antivirus', 'malware protection', 'internet security software'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['usd'],
+      display_name: 'security & antivirus'
+    },
+    'software.hosting_domains': {
+      enabled: true,
+      patterns: ['web hosting', 'domain registration', 'buy a domain', 'hosting plan'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['usd'],
+      display_name: 'hosting & domains'
+    },
+    'software.ai_tools': {
+      enabled: true,
+      patterns: ['ai writing tool', 'ai image generator', 'ai coding assistant', 'chatbot subscription'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['usd'],
+      display_name: 'AI tools'
+    },
+    'software.music_streaming': {
+      enabled: true,
+      patterns: ['spotify subscription', 'music streaming service', 'apple music subscription'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'music streaming'
+    },
+    'software.gaming_subs': {
+      enabled: true,
+      patterns: ['game pass subscription', 'gaming subscription service', 'ps plus subscription'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['usd'],
+      display_name: 'gaming subscriptions'
+    },
+    'software.developer_tools': {
+      enabled: true,
+      patterns: ['developer tool', 'ide subscription', 'api platform', 'ci cd tool'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['usd'],
+      display_name: 'developer tools'
+    },
 
-    // ================= GIFTING / OCCASIONS (P0, gifting.* including wedding) =================
+    // ================= GIFTING / OCCASIONS =================
     'gifting.general': {
       enabled: true,
       patterns: [...GENERAL_OCCASION_GIFT_PHRASES, 'gift for my', 'gift for a', 'gift ideas for', 'corporate gifting', 'gift for'],
       secondary: [],
-      // Wedding and Diwali/Rakhi route to their own, more specific
-      // categories (occasions.wedding, gifting.festive) -- excluded here
-      // the same way, so a generic "gift for my" phrase hit here doesn't
-      // win a scoring tie against the category that's actually canonical
-      // for that occasion.
       negative: ['wedding', 'diwali', 'rakhi', 'raksha bandhan'],
       budget_scales: ['inr', 'usd'],
       display_name: 'gifts'
@@ -582,9 +850,16 @@
       budget_scales: ['inr'],
       display_name: 'wedding shopping'
     },
-    'occasions.party': stub('party supplies', ['inr', 'usd']),
+    'occasions.party': {
+      enabled: true,
+      patterns: ['party decorations', 'balloons', 'birthday supplies', 'party supplies', 'birthday decorations'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'party supplies'
+    },
 
-    // ================= BEAUTY & GROOMING (P1) =================
+    // ================= BEAUTY & GROOMING =================
     'beauty.skincare': {
       enabled: true,
       patterns: [
@@ -642,125 +917,571 @@
       budget_scales: ['inr'],
       display_name: "men's grooming"
     },
-    'beauty.tools': stub('beauty tools', ['inr', 'usd']),
-    'beauty.bath_body': stub('bath & body', ['inr', 'usd']),
-    'beauty.nails': stub('nail care', ['inr', 'usd']),
+    'beauty.tools': {
+      enabled: true,
+      patterns: ['hair straightener', 'hair curler', 'curling iron', 'facial steamer', 'derma roller'],
+      secondary: [],
+      negative: BEAUTY_CLINICAL_NEGATIVES,
+      budget_scales: ['inr', 'usd'],
+      display_name: 'beauty tools'
+    },
+    'beauty.bath_body': {
+      enabled: true,
+      patterns: ['body wash', 'body lotion', 'body scrub', 'bath bomb', 'shower gel', 'body butter'],
+      secondary: [],
+      negative: BEAUTY_CLINICAL_NEGATIVES,
+      budget_scales: ['inr', 'usd'],
+      display_name: 'bath & body'
+    },
+    'beauty.nails': {
+      enabled: true,
+      patterns: ['nail polish', 'nail art kit', 'nail extensions', 'manicure kit', 'nail care'],
+      secondary: [],
+      negative: BEAUTY_CLINICAL_NEGATIVES,
+      budget_scales: ['inr', 'usd'],
+      display_name: 'nail care'
+    },
 
-    // ================= FITNESS & SPORTS (P1) =================
-    'fitness.equipment': stub('fitness equipment', ['inr', 'usd']),
-    'fitness.apparel_gear': stub('fitness apparel & gear', ['inr', 'usd']),
-    'fitness.nutrition': stub('fitness nutrition', ['inr', 'usd']),
-    'fitness.cycling': stub('cycling', ['inr', 'usd']),
-    'fitness.yoga': stub('yoga', ['inr', 'usd']),
-    'sports.cricket': stub('cricket gear', ['inr']),
-    'sports.badminton_tennis': stub('badminton & tennis', ['inr', 'usd']),
-    'sports.football_basketball': stub('football & basketball', ['inr', 'usd']),
-    'sports.swimming': stub('swimming gear', ['inr', 'usd']),
-    'sports.outdoor_camping': stub('camping & outdoor gear', ['inr', 'usd']),
-    'sports.running_gear': stub('running gear', ['inr', 'usd']),
+    // ================= FITNESS & SPORTS =================
+    'fitness.equipment': {
+      enabled: true,
+      patterns: ['dumbbells', 'treadmill', 'weight bench', 'resistance bands', 'yoga mat', 'home gym equipment', 'exercise bike', 'kettlebell'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'fitness equipment'
+    },
+    'fitness.apparel_gear': {
+      enabled: true,
+      patterns: ['gym bag', 'gym gloves', 'weightlifting gloves', 'gym belt'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'fitness apparel & gear'
+    },
+    'fitness.nutrition': {
+      enabled: true,
+      patterns: ['protein powder', 'whey protein', 'creatine', 'electrolytes', 'protein bars', 'mass gainer', 'bcaa supplement'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'fitness nutrition'
+    },
+    'fitness.cycling': {
+      enabled: true,
+      patterns: ['bicycle', 'cycle', 'bike helmet', 'road bike', 'mountain bike', 'cycling lights', 'cycle accessories'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'cycling'
+    },
+    'fitness.yoga': {
+      enabled: true,
+      patterns: ['yoga mat', 'yoga blocks', 'meditation cushion', 'yoga accessories'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'yoga'
+    },
+    'sports.cricket': {
+      enabled: true,
+      patterns: ['cricket bat', 'cricket ball', 'cricket pads', 'cricket gloves', 'cricket kit', 'cricket helmet'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'cricket gear'
+    },
+    'sports.badminton_tennis': {
+      enabled: true,
+      patterns: ['badminton racquet', 'tennis racquet', 'shuttlecock', 'racquet strings', 'badminton shuttle'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'badminton & tennis'
+    },
+    'sports.football_basketball': {
+      enabled: true,
+      patterns: ['football', 'basketball', 'soccer ball', 'football jersey', 'basketball hoop'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'football & basketball'
+    },
+    'sports.swimming': {
+      enabled: true,
+      patterns: ['swimming goggles', 'swim cap', 'swimming costume', 'swim fins'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'swimming gear'
+    },
+    'sports.outdoor_camping': {
+      enabled: true,
+      patterns: ['tent', 'sleeping bag', 'trekking pole', 'rucksack', 'camping stove', 'backpacking gear', 'camping gear'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'camping & outdoor gear'
+    },
+    'sports.running_gear': {
+      enabled: true,
+      patterns: ['running belt', 'hydration pack', 'running watch', 'running accessories'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'running gear'
+    },
 
-    // ================= FOOD & GROCERY (P1) =================
-    'food.delivery': stub('food delivery', ['inr', 'usd']),
-    'food.groceries_quickcommerce': stub('groceries', ['inr']),
-    'food.coffee_tea': stub('coffee & tea', ['inr', 'usd']),
-    'food.snacks_gourmet': stub('snacks & gourmet', ['inr', 'usd']),
-    'food.meal_plans': stub('meal plans', ['inr', 'usd']),
-    'food.dining_out': stub('dining out', ['inr']),
+    // ================= FOOD & GROCERY =================
+    'food.delivery': {
+      enabled: true,
+      patterns: ['food delivery', 'biryani near me', 'late night food delivery', 'restaurant delivery', 'order food online'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'food delivery'
+    },
+    'food.groceries_quickcommerce': {
+      enabled: true,
+      patterns: ['grocery delivery', 'online grocery', 'instant grocery delivery', 'monthly grocery order', 'quick commerce grocery'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'groceries'
+    },
+    'food.coffee_tea': {
+      enabled: true,
+      patterns: ['coffee beans', 'coffee subscription', 'tea leaves', 'french press'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'coffee & tea'
+    },
+    'food.snacks_gourmet': {
+      enabled: true,
+      patterns: ['dry fruits', 'gourmet chocolates', 'snack box', 'gift hamper snacks', 'premium snacks'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'snacks & gourmet'
+    },
+    'food.meal_plans': {
+      enabled: true,
+      patterns: ['meal kit subscription', 'tiffin service', 'meal plan subscription', 'diet meal plan delivery'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'meal plans'
+    },
+    'food.dining_out': {
+      enabled: true,
+      patterns: ['restaurant reservation', 'buffet deals', 'dining offers', 'restaurant deals'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'dining out'
+    },
 
-    // ================= GAMING (P1) -- gaming.pc intentionally omitted, canonical = electronics.gaming_hardware =================
-    'gaming.consoles': stub('gaming consoles', ['inr', 'usd']),
-    'gaming.titles': stub('game titles', ['inr', 'usd']),
-    'gaming.accessories': stub('gaming accessories', ['inr', 'usd']),
+    // ================= GAMING -- gaming.pc intentionally omitted, canonical = electronics.gaming_hardware =================
+    'gaming.consoles': {
+      enabled: true,
+      patterns: ['ps5 console', 'xbox series x', 'nintendo switch console', 'gaming console'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'gaming consoles'
+    },
+    'gaming.titles': {
+      enabled: true,
+      patterns: ['video game', 'game preorder', 'ps5 games', 'xbox games', 'pc game', 'switch games'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'game titles'
+    },
+    'gaming.accessories': {
+      enabled: true,
+      patterns: ['gaming headset', 'gaming chair', 'capture card', 'gaming controller'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'gaming accessories'
+    },
 
-    // ================= AUTO (P1) -- auto.cycles intentionally omitted, canonical = fitness.cycling =================
-    'auto.two_wheeler_gear': stub('two-wheeler gear', ['inr']),
-    'auto.car_accessories': stub('car accessories', ['inr', 'usd']),
-    'auto.tyres_batteries': stub('tyres & batteries', ['inr']),
-    'auto.care': stub('car care', ['inr']),
-    'auto.ev_accessories': stub('EV accessories', ['inr', 'usd']),
+    // ================= AUTO -- auto.cycles intentionally omitted, canonical = fitness.cycling =================
+    'auto.two_wheeler_gear': {
+      enabled: true,
+      patterns: ['bike helmet', 'riding gloves', 'riding jacket', 'motorcycle helmet', 'two wheeler accessories'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'two-wheeler gear'
+    },
+    'auto.car_accessories': {
+      enabled: true,
+      patterns: ['dash cam', 'car seat covers', 'car air purifier', 'car infotainment system', 'car floor mats', 'car charger'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'car accessories'
+    },
+    'auto.tyres_batteries': {
+      enabled: true,
+      patterns: ['car tyres', 'car battery', 'bike tyres', 'tubeless tyres'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'tyres & batteries'
+    },
+    'auto.care': {
+      enabled: true,
+      patterns: ['car wash kit', 'car polish', 'microfiber cloth for car', 'car cleaning kit'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'car care'
+    },
+    'auto.ev_accessories': {
+      enabled: true,
+      patterns: ['ev charger', 'electric vehicle charger', 'ev charging cable'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'EV accessories'
+    },
 
-    // ================= PETS (P1) =================
-    'pets.food': stub('pet food', ['inr', 'usd']),
-    'pets.accessories': stub('pet accessories', ['inr', 'usd']),
-    'pets.grooming': stub('pet grooming', ['inr', 'usd']),
-    'pets.toys': stub('pet toys', ['inr', 'usd']),
+    // ================= PETS =================
+    'pets.food': {
+      enabled: true,
+      patterns: ['dog food', 'cat food', 'pet food', 'puppy food'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'pet food'
+    },
+    'pets.accessories': {
+      enabled: true,
+      patterns: ['pet leash', 'pet bed', 'cat litter', 'aquarium', 'pet carrier', 'dog collar'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'pet accessories'
+    },
+    'pets.grooming': {
+      enabled: true,
+      patterns: ['pet grooming kit', 'dog shampoo', 'pet nail clipper', 'pet brush'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'pet grooming'
+    },
+    'pets.toys': {
+      enabled: true,
+      patterns: ['pet toys', 'dog toys', 'cat toys', 'chew toys for dogs'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'pet toys'
+    },
 
-    // ================= BOOKS / MEDIA / STATIONERY (P2) =================
-    'books.print_ebooks': stub('books', ['inr', 'usd']),
-    'books.audiobooks': stub('audiobooks', ['inr', 'usd']),
-    'stationery.office_art': stub('stationery & art supplies', ['inr', 'usd']),
-    'music.instruments': stub('musical instruments', ['inr', 'usd']),
+    // ================= BOOKS / MEDIA / STATIONERY =================
+    'books.print_ebooks': {
+      enabled: true,
+      patterns: ['books online', 'ebook', 'buy books', 'bestseller books', 'kindle books'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'books'
+    },
+    'books.audiobooks': {
+      enabled: true,
+      patterns: ['audiobook', 'audible subscription', 'audiobook app'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'audiobooks'
+    },
+    'stationery.office_art': {
+      enabled: true,
+      patterns: ['pens', 'notebooks stationery', 'art supplies', 'sketch pens', 'drawing kit', 'stationery set'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'stationery & art supplies'
+    },
+    'music.instruments': {
+      enabled: true,
+      patterns: ['guitar', 'keyboard instrument', 'ukulele', 'musical instrument', 'digital piano'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'musical instruments'
+    },
 
-    // ================= SERVICES (LOCAL, P1) =================
-    'services.home': stub('home services', ['inr']),
-    'services.salon_at_home': stub('salon at home', ['inr']),
-    'services.appliance_repair': stub('appliance repair', ['inr']),
-    'services.movers_packers': stub('movers & packers', ['inr']),
-    'services.laundry': stub('laundry services', ['inr']),
+    // ================= SERVICES (LOCAL) =================
+    'services.home': {
+      enabled: true,
+      patterns: ['deep cleaning service', 'pest control service', 'ac service', 'plumbing service', 'painting service', 'home cleaning service'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'home services'
+    },
+    'services.salon_at_home': {
+      enabled: true,
+      patterns: ['salon at home', 'home spa service', 'at home haircut', 'at home facial'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'salon at home'
+    },
+    'services.appliance_repair': {
+      enabled: true,
+      patterns: ['appliance repair service', 'ac repair', 'washing machine repair', 'refrigerator repair'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'appliance repair'
+    },
+    'services.movers_packers': {
+      enabled: true,
+      patterns: ['movers and packers', 'packers and movers', 'home relocation service', 'moving service'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'movers & packers'
+    },
+    'services.laundry': {
+      enabled: true,
+      patterns: ['laundry service', 'dry cleaning service', 'wash and fold service'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'laundry services'
+    },
 
-    // ================= TELECOM / UTILITIES (P2) =================
-    'telecom.mobile_plans': stub('mobile plans', ['inr']),
-    'telecom.broadband': stub('broadband', ['inr']),
-    'telecom.dth_ott_bundles': stub('DTH & OTT bundles', ['inr']),
+    // ================= TELECOM / UTILITIES =================
+    'telecom.mobile_plans': {
+      enabled: true,
+      patterns: ['mobile recharge', 'prepaid plan', 'postpaid plan', 'sim card', 'port my number'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'mobile plans'
+    },
+    'telecom.broadband': {
+      enabled: true,
+      patterns: ['broadband connection', 'wifi broadband plan', 'internet connection'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'broadband'
+    },
+    'telecom.dth_ott_bundles': {
+      enabled: true,
+      patterns: ['dth recharge', 'dth plan', 'ott bundle plan'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr'],
+      display_name: 'DTH & OTT bundles'
+    },
 
-    // ================= EVENTS / ENTERTAINMENT (P1) =================
-    'events.movies': stub('movie tickets', ['inr', 'usd']),
-    'events.concerts_standup': stub('concerts & shows', ['inr', 'usd']),
-    'events.sports_tickets': stub('sports tickets', ['inr', 'usd']),
-    'events.theme_parks': stub('theme parks', ['inr', 'usd']),
+    // ================= EVENTS / ENTERTAINMENT =================
+    'events.movies': {
+      enabled: true,
+      patterns: ['movie tickets', 'book movie tickets', 'cinema tickets'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'movie tickets'
+    },
+    'events.concerts_standup': {
+      enabled: true,
+      patterns: ['concert tickets', 'standup show tickets', 'live show tickets'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'concerts & shows'
+    },
+    'events.sports_tickets': {
+      enabled: true,
+      patterns: ['ipl tickets', 'match tickets', 'sports event tickets', 'cricket match tickets'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'sports tickets'
+    },
+    'events.theme_parks': {
+      enabled: true,
+      patterns: ['theme park tickets', 'amusement park tickets', 'water park tickets'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'theme parks'
+    },
 
-    // ================= OFFICE / WFH (P1) =================
-    'office.chairs_desks': stub('office chairs & desks', ['inr', 'usd']),
-    'office.setup': stub('office/WFH setup', ['inr', 'usd']),
-    'office.supplies': stub('office supplies', ['inr', 'usd']),
+    // ================= OFFICE / WFH =================
+    'office.chairs_desks': {
+      enabled: true,
+      patterns: ['ergonomic chair', 'standing desk', 'office chair', 'office desk', 'wfh chair'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'office chairs & desks'
+    },
+    'office.setup': {
+      enabled: true,
+      patterns: ['monitor arm', 'laptop dock', 'ring light for calls', 'wfh setup', 'home office setup'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'office/WFH setup'
+    },
+    'office.supplies': {
+      enabled: true,
+      patterns: ['office supplies', 'printer paper', 'office stationery', 'sticky notes'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'office supplies'
+    },
 
-    // ================= REFURBISHED / RESALE (P2) =================
-    'resale.refurb_electronics': stub('refurbished electronics', ['inr', 'usd']),
-    'resale.exchange_offers': stub('exchange offers', ['inr', 'usd'])
+    // ================= REFURBISHED / RESALE =================
+    'resale.refurb_electronics': {
+      enabled: true,
+      patterns: ['renewed phone', 'refurbished laptop', 'open box laptop', 'refurbished electronics', 'certified renewed'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'refurbished electronics'
+    },
+    'resale.exchange_offers': {
+      enabled: true,
+      patterns: ['exchange my old phone', 'phone exchange offer', 'trade in my phone', 'exchange offer'],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'exchange offers'
+    },
+
+    // ================= FALLBACK (v2.0) =================
+    // Never scored through the normal pattern-matching loop (explicitly
+    // skipped in classifier.js's scoreCategories). Reached only via the
+    // shopping.general fallback path in classify() -- see the V2.0 SCOPE
+    // NOTE above and extractProductTokens()/hasPlausibleProductReference()
+    // below.
+    'shopping.general': {
+      enabled: true,
+      patterns: [],
+      secondary: [],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'shopping picks'
+    }
   };
 
   // --------------------------------------------------------------------------
-  // INTENT SIGNALS (Section 2 of the doc): a category only fires when it
-  // clears the score threshold AND at least one of these is present. All
-  // scoped to userText only, same rationale as budget parsing -- a
-  // shopper's own framing lives in what they typed, not the assistant's
-  // response.
+  // RESEARCH SIGNALS (v2.0, renamed + broadened from v1's "intent
+  // signals"). A category only needs ONE of these present to drop its
+  // pattern threshold from 2 hits to 1 (see classifier.js). Scoped to
+  // userText only -- a shopper's own framing lives in what they typed,
+  // not the assistant's response.
   // --------------------------------------------------------------------------
-  const INTENT_SIGNALS = {
-    direct_ask: ['best ', 'top ', 'which should i buy', 'recommend a ', 'recommend an ', 'should i buy', 'suggest a ', 'suggest me a', ' for under'],
-    comparison: [' vs ', ' vs.', ' versus ', 'is better than', 'alternatives to', 'alternative to', 'competitors to', 'compared to'],
-    // Highest-value signal, fires eagerly -- also adds a scoring bonus,
-    // handled separately in classifier.js, not just a gate here.
-    deal_seeking: ['discount', 'coupon', 'promo code', 'on sale', 'best deal', 'cheapest', 'lowest price', 'price drop', 'cashback', 'flash sale', 'clearance sale', 'offer', 'deal'],
-    persona_recommendation: ['for my dad', 'for my mom', 'for my mother', 'for my father', 'for my wife', 'for my husband', 'for my son', 'for my daughter', 'for my sister', 'for my brother', 'for my girlfriend', 'for my boyfriend', 'for a student', 'for a beginner', 'for beginners', 'for a professional', 'gift for', 'for flat feet'],
-    replacement_upgrade: ['broke', 'died', 'stopped working', 'upgrade from', 'switching from', 'worth upgrading', 'replace my', 'my old'],
-    where_to_buy: ['where can i buy', 'where to buy', 'is it available', 'available in india', 'delivery in', 'in stock', 'where is it available'],
-    setup_bundle: ['wfh setup', 'home gym', 'apartment essentials', 'newborn checklist', 'pc build', 'trekking kit', 'setup under', 'bundle'],
-    occasion: ['diwali', 'wedding', 'rakhi', 'raksha bandhan', 'anniversary', 'birthday', 'back to school', 'monsoon essentials', "valentine's", 'valentines', 'housewarming', 'christmas', 'new year'],
-    travel_planning: ['itinerary', 'days in ', 'where to stay in', 'budget trip to', 'honeymoon in', 'trip to', 'travel to', 'vacation in'],
-    how_to_choose: ['what to look for in', 'how to pick a', 'how to choose a', 'buying guide for', 'how to select a']
+  const RESEARCH_SIGNALS = {
+    purchase: ['best ', 'top ', 'buy', 'price', ' under ', 'deal', 'discount', 'coupon', 'cheapest', 'where to buy', 'in stock'],
+    comparison: [' vs ', ' vs.', ' versus ', 'compare', 'better than', 'difference between'],
+    // 'similar' alone (not just 'similar to') so "similar perfumes to X"
+    // still counts -- the noun in between means the bare phrase 'similar
+    // to' never appears as a contiguous substring in that word order.
+    alternatives: ['alternatives to', 'alternative to', 'similar to', 'similar', 'like ', 'replacement for', 'competitors of', 'competitors to', 'instead of'],
+    evaluation: ['worth it', ' review', 'review of', 'should i get', 'pros and cons of', 'any good'],
+    recommendation: ['recommend', 'suggest', 'which should i', 'for my', 'for a', 'for beginners'],
+    upgrade_replacement: ['upgrade from', 'broke', 'died', 'switching from'],
+    setup_bundle: [' setup', ' essentials', ' checklist', ' kit'],
+    // Occasion words alone route to gifting -- see gifting.*/occasions.*
+    // patterns, which already encode "occasion + gift noun" combinators.
+    occasion: ['gift', 'diwali', 'wedding', 'rakhi', 'birthday', 'anniversary']
   };
 
-  // Informational framing suppresses the intent gate entirely (forces
-  // silence) regardless of how strong the category match is -- "how does
-  // X work" is not a purchase, no matter how specific X is.
+  // Narrowed to clearly non-commercial framings only (v2.0) -- "review of
+  // X" is explicitly research now (fires), not suppressed. A match here
+  // forces silence regardless of category score.
   const INFORMATIONAL_SUPPRESSORS = [
-    'how does', 'how do ', 'history of', 'who invented', 'market size', 'company revenue',
-    'news about', 'how to repair', 'review of my'
+    'how does', 'how do ', 'history of', 'who invented', 'homework', 'essay',
+    'company revenue', 'market size', 'news about'
   ];
 
-  function detectIntentSignals(userText) {
+  function detectResearchSignal(userText) {
     const t = (userText || '').toLowerCase();
     const matched = [];
-    for (const [name, phrases] of Object.entries(INTENT_SIGNALS)) {
+    for (const [name, phrases] of Object.entries(RESEARCH_SIGNALS)) {
       if (phrases.some((p) => t.includes(p))) matched.push(name);
     }
     const informational = INFORMATIONAL_SUPPRESSORS.some((p) => t.includes(p));
     return {
       signals: matched,
-      dealSeeking: matched.includes('deal_seeking'),
+      hasSignal: matched.length > 0,
+      // "purchase" now carries what "deal_seeking" used to (discount,
+      // coupon, cheapest, ...) -- still worth a small scoring bonus.
+      dealSeeking: matched.includes('purchase'),
       informationalSuppressed: informational
     };
+  }
+
+  // --------------------------------------------------------------------------
+  // shopping.general support (v2.0): token extraction + a deliberately
+  // permissive "is this plausibly about a real product" check. Both are
+  // cheap to over-trigger on, because the actual safety net is downstream
+  // in main.js -- shopping.general only ever RENDERS if a keyword-matched
+  // offer actually exists in the catalog. Over-attempting costs nothing;
+  // under-attempting misses real product research.
+  // --------------------------------------------------------------------------
+  const PRODUCT_TOKEN_STOPWORDS = new Set([
+    'best', 'good', 'that', 'with', 'this', 'what', 'which', 'should', 'recommend', 'recommends',
+    'recommended', 'suggest', 'suggests', 'review', 'reviews', 'worth', 'than', 'from', 'into',
+    'about', 'under', 'over', 'their', 'there', 'where', 'when', 'some', 'such', 'only', 'just',
+    'more', 'most', 'very', 'does', 'doing', 'have', 'has', 'had', 'will', 'would', 'could', 'can',
+    'buy', 'buying', 'price', 'prices', 'deal', 'deals', 'discount', 'discounts', 'coupon', 'coupons',
+    'cheapest', 'cheap', 'compare', 'compared', 'comparing', 'alternative', 'alternatives', 'similar',
+    'like', 'instead', 'replacement', 'competitor', 'competitors', 'upgrade', 'upgrading', 'switching',
+    'switch', 'setup', 'essentials', 'checklist', 'kit', 'gift', 'gifts', 'any', 'get'
+  ]);
+
+  function extractProductTokens(originalText) {
+    const words = (originalText || '').toLowerCase().match(/[a-z0-9]{3,}/g) || [];
+    const seen = new Set();
+    const tokens = [];
+    for (const w of words) {
+      if (PRODUCT_TOKEN_STOPWORDS.has(w) || seen.has(w)) continue;
+      seen.add(w);
+      tokens.push(w);
+    }
+    return tokens;
+  }
+
+  function hasPlausibleProductReference(originalText) {
+    const text = originalText || '';
+    // A capitalized token not at the very start of the string (sentence-
+    // initial capitals don't count as brand-like signal).
+    const capMatch = /[a-zA-Z]\s+[A-Z][a-zA-Z]{2,}/.test(text);
+    // Model-number-looking token: letters+digits or digits+letters.
+    const modelMatch = /\b[a-zA-Z]*\d+[a-zA-Z]*\b/.test(text);
+    // A price mention.
+    const priceMatch = /(\$|₹|rs\.?|inr)\s*\d|\d+\s*(rs|inr|usd)\b|under\s+\d|below\s+\d/i.test(text);
+    // Fallback: any concrete content word survives token extraction.
+    const hasContentWord = extractProductTokens(text).length > 0;
+    return capMatch || modelMatch || priceMatch || hasContentWord;
+  }
+
+  // Defense in depth for the shopping.general fallback: even though
+  // checkBlocked() in classifier.js already runs on the full combined
+  // text before this fallback is ever reached, each matched product
+  // token is independently checked against every BLOCKED phrase (exact
+  // match only, to avoid false positives from partial substrings) before
+  // being used for catalog keyword-matching in main.js.
+  function isBlockedToken(token) {
+    const t = (token || '').toLowerCase();
+    return Object.values(BLOCKED).some((group) => group.phrases.includes(t));
   }
 
   function taxonomyDebugLog(...args) {
@@ -888,6 +1609,7 @@
   // Blocked categories: checked first, short-circuit everything to null.
   // Generous pattern lists on purpose -- silence is the safe default. A
   // blocked hit silences the page even when purchase intent is explicit.
+  // UNCHANGED from v1.1 -- v2.0 does not touch this list at all.
   const BLOCKED = {
     health: {
       phrases: [
@@ -896,7 +1618,6 @@
         'std ', 'sti ', 'biopsy', 'tumor', 'cancer', 'surgery', 'chemotherapy', 'disease',
         'infection', 'rash', 'std test', 'pregnant', 'pregnancy', 'fertility', 'period cramps',
         'std symptoms',
-        // v1 expansion: health commerce (Section 4)
         'glucometer', 'blood pressure monitor', 'bp monitor', 'thermometer', 'cpap', 'cpap machine',
         'nebulizer', 'ozempic', 'wegovy', 'weight loss pills', 'weight loss injection',
         'appetite suppressant', 'fat burner pills', 'ovulation kit', 'fertility test',
@@ -911,7 +1632,6 @@
         'depression', 'depressed', 'anxiety attack', 'anxious', 'panic attack', 'therapist',
         'therapy session', 'bipolar', 'ptsd', 'ocd', 'eating disorder', 'self harm', 'self-harm',
         'suicide', 'suicidal', 'want to die', 'end my life', 'crisis hotline', 'mental breakdown',
-        // v1 expansion: therapy/mental-wellness commerce
         'therapy app', 'counseling service', 'mental wellness app', 'online therapy'
       ]
     },
@@ -921,10 +1641,6 @@
         'credit score', 'my mortgage', 'investing my savings', 'retirement savings',
         'life insurance policy', 'health insurance plan', 'file my taxes', 'irs audit',
         'payday loan', 'refinance my', 'my 401k', 'stock portfolio advice',
-        // v1 expansion: finance products (Section 4) -- credit cards, loans,
-        // BNPL, insurance of every kind, broking/demat, crypto, gold-as-
-        // investment. Gold vocabulary deliberately narrow (rate/invest/
-        // returns/bond/digital) so "gold earrings for wedding" is unaffected.
         'credit card', 'best credit card', 'cashback credit card', 'personal loan', 'home loan',
         'car loan', 'loan against', 'apply for a loan', 'buy now pay later', 'bnpl',
         'insurance policy', 'health insurance', 'life insurance', 'motor insurance',
@@ -952,7 +1668,6 @@
       phrases: [
         'coming out as', 'am i gay', 'am i bisexual', 'sexual orientation', 'erectile dysfunction',
         'libido', 'sexual performance',
-        // v1 expansion: adult products and dating services (Section 4)
         'dating app', 'dating service', 'adult toys', 'adult content'
       ]
     },
@@ -992,7 +1707,6 @@
         'i want to hurt myself', 'i want to hurt someone'
       ]
     },
-    // v1 new blocked groups (Section 4) --------------------------------
     gambling: {
       phrases: [
         'real money gaming', 'rummy for cash', 'teen patti cash', 'betting app', 'casino app',
@@ -1002,12 +1716,7 @@
     },
     alcohol_tobacco: {
       phrases: [
-        // Deliberately specific (not bare "wine") so "wine fridge" stays
-        // unblocked and fires home.large_appliances per the doc's edge ruling.
         'whiskey', 'vodka', 'tequila', 'rum under', 'best rum', 'liquor', 'alcohol delivery',
-        // NOTE: deliberately no bare 'best wine' -- collides with "best
-        // wine fridge" (an appliance, home.large_appliances), which the
-        // doc's own edge ruling requires to stay unblocked.
         'buy wine', 'wine under', 'bottle of wine', 'cigarette', 'cigar',
         'tobacco', 'vape', 'vaping', 'e-cigarette', 'nicotine'
       ]
@@ -1016,9 +1725,6 @@
       phrases: [
         'firearm', 'handgun', 'rifle', 'pistol', 'ammunition', 'gun store', 'buy a gun',
         'self defense weapon', 'stun gun', 'taser'
-        // pepper spray deliberately NOT blocked -- see doc edge ruling
-        // ("gray zone, keep out for v1, revisit with counsel"). No category
-        // matches it either, so it's silent by omission, not active block.
       ]
     },
     surveillance: {
@@ -1027,9 +1733,6 @@
         'spy cam', 'hidden camera', 'track my partner', 'track my spouse', 'catch a cheating',
         'phone tracker app', 'phone tracker', 'keylogger', 'monitor my employee',
         'hidden camera to catch'
-        // NOTE: does not block generic "home security camera" or "video
-        // doorbell" -- those fire home.smart_home per the doc's explicit
-        // ruling (consumer convenience framing stays allowed).
       ]
     },
     funeral_commerce: {
@@ -1040,5 +1743,9 @@
     }
   };
 
-  window.ScribbleTaxonomy = { CATEGORIES, BLOCKED, INTENT_SIGNALS, INFORMATIONAL_SUPPRESSORS, detectIntentSignals, extractBudgetBand };
+  window.ScribbleTaxonomy = {
+    CATEGORIES, BLOCKED, RESEARCH_SIGNALS, INFORMATIONAL_SUPPRESSORS,
+    detectResearchSignal, extractProductTokens, hasPlausibleProductReference, isBlockedToken,
+    extractBudgetBand
+  };
 })();

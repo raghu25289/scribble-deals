@@ -1571,5 +1571,27 @@
     "url": "https://example.com/aff/gusto-payroll",
     "sponsored": true,
     "value_score": 63
+  },
+  {
+    "id": "off-144",
+    "category": "home.cookware_dining",
+    "merchant": "Milton",
+    "title": "Insulated stainless steel water bottle",
+    "discount_text": "20% off",
+    "code": "MILTON20",
+    "url": "https://example.com/aff/milton-waterbottle",
+    "sponsored": false,
+    "value_score": 77
+  },
+  {
+    "id": "off-145",
+    "category": "home.cookware_dining",
+    "merchant": "Prestige",
+    "title": "Non-stick kadai with lid",
+    "discount_text": "\u20b9300 off",
+    "code": "PRESTIGE300",
+    "url": "https://example.com/aff/prestige-kadai",
+    "sponsored": false,
+    "value_score": 74
   }
 ]

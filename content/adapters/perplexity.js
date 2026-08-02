@@ -20,6 +20,14 @@
     return `<${el.tagName.toLowerCase()}${id}>`;
   }
 
+  // document.title on Perplexity carries a " - Perplexity" (or similar)
+  // suffix past the actual query -- only relevant when userText falls
+  // back to the title (heading selector missed), but when it does, the
+  // suffix pollutes budget/pattern matching with irrelevant trailing text.
+  function cleanTitle(title) {
+    return (title || '').replace(/\s*[-|]\s*Perplexity(\s+AI)?\s*$/i, '').trim();
+  }
+
   function getActivePanel() {
     return (
       document.querySelector('main [role="tabpanel"][data-state="active"]') ||
@@ -48,7 +56,7 @@
     const panel = getActivePanel();
     if (!panel) {
       debugLog('extract(): no active tabpanel found, falling back to document.title for userText');
-      return { userText: document.title || '', responseText: '' };
+      return { userText: cleanTitle(document.title), responseText: '' };
     }
 
     // Query heading lives inside the active panel; the Links/Images panels
@@ -58,7 +66,7 @@
     let userText = headingEl ? (headingEl.innerText || '') : '';
     if (!userText) {
       debugLog('extract(): no [role="heading"] in active panel, falling back to document.title');
-      userText = document.title || '';
+      userText = cleanTitle(document.title);
     }
 
     let responseText = panel.innerText || '';
