@@ -118,6 +118,23 @@
   const FESTIVE_OCCASION_WORDS = ['diwali', 'rakhi', 'raksha bandhan'];
   const FESTIVE_OCCASION_GIFT_PHRASES = FESTIVE_OCCASION_WORDS.flatMap((occ) => GIFT_NOUNS.map((n) => `${occ} ${n}`));
 
+  // "best <product noun>" combinator for beauty.* -- a single beauty noun
+  // (lipstick, sunscreen, ...) is a single-word pattern and, per this
+  // file's scoring rules, needs a second hit to clear threshold on its
+  // own. Pairing each with "best" gives a genuine multi-word compound
+  // that satisfies threshold alone (same mechanic as "designer <garment>"
+  // above) AND doubles as the direct_ask intent signal -- one pattern
+  // satisfies both gates for the common "best X" phrasing.
+  function bestNounPhrases(nouns) {
+    return nouns.map((n) => `best ${n}`);
+  }
+
+  // Clinical framing silences beauty categories even when the blocked
+  // list's own (more specific) phrases don't happen to match -- defense
+  // in depth alongside BLOCKED.health, applied per-category rather than
+  // globally since only beauty.* needs it.
+  const BEAUTY_CLINICAL_NEGATIVES = ['acne treatment', 'dermatologist', 'prescription', 'hair loss treatment', 'pigmentation treatment'];
+
   // ---- Stub factory for P1/P2 placeholders --------------------------------
   // Structural placeholder only, per the doc: "Do not write their patterns
   // now." Empty patterns mean these can never score (see SCOPE NOTE #3).
@@ -498,6 +515,18 @@
       budget_scales: ['inr', 'usd'],
       display_name: 'courses & edtech'
     },
+    'software.hr_payroll': {
+      enabled: true,
+      patterns: [
+        'payroll', 'payroll software', 'payroll tool', 'best payroll', 'payroll for',
+        'hr software', 'hrms', 'hris', 'attendance tracking', 'leave management',
+        'hiring tool', 'ats', 'applicant tracking', 'employee onboarding', 'contractor payments'
+      ],
+      secondary: ['gusto', 'rippling', 'deel', 'zoho payroll', 'razorpayx', 'keka', 'quickbooks payroll'],
+      negative: [],
+      budget_scales: ['inr', 'usd'],
+      display_name: 'HR & payroll software'
+    },
     'software.design_creative': stub('design & creative software', ['usd']),
     'software.cloud_storage': stub('cloud storage', ['usd']),
     'software.security_antivirus': stub('security & antivirus', ['usd']),
@@ -556,11 +585,63 @@
     'occasions.party': stub('party supplies', ['inr', 'usd']),
 
     // ================= BEAUTY & GROOMING (P1) =================
-    'beauty.skincare': stub('skincare', ['inr', 'usd']),
-    'beauty.haircare': stub('haircare', ['inr', 'usd']),
-    'beauty.makeup': stub('makeup', ['inr', 'usd']),
-    'beauty.fragrance': stub('fragrance', ['inr', 'usd']),
-    'beauty.mens_grooming': stub("men's grooming", ['inr', 'usd']),
+    'beauty.skincare': {
+      enabled: true,
+      patterns: [
+        'sunscreen', 'spf', 'serum', 'moisturizer', 'face wash', 'niacinamide', 'vitamin c serum',
+        ...bestNounPhrases(['sunscreen', 'serum', 'moisturizer', 'face wash']),
+        'skincare routine', 'best skincare for'
+      ],
+      secondary: ['glow', 'hydrating', 'oily skin', 'dry skin'],
+      negative: BEAUTY_CLINICAL_NEGATIVES,
+      budget_scales: ['inr'],
+      display_name: 'skincare'
+    },
+    'beauty.haircare': {
+      enabled: true,
+      patterns: [
+        'shampoo', 'conditioner', 'hair oil', 'hair serum', 'hair dryer',
+        ...bestNounPhrases(['shampoo', 'conditioner', 'hair oil', 'hair dryer']),
+        'best shampoo for'
+      ],
+      secondary: ['frizzy hair', 'hair fall control'],
+      negative: BEAUTY_CLINICAL_NEGATIVES,
+      budget_scales: ['inr'],
+      display_name: 'haircare'
+    },
+    'beauty.makeup': {
+      enabled: true,
+      patterns: [
+        'lipstick', 'foundation makeup', 'concealer', 'kajal', 'eyeliner', 'mascara', 'blush', 'compact powder', 'makeup palette',
+        ...bestNounPhrases(['lipstick', 'foundation', 'concealer', 'kajal', 'eyeliner', 'mascara', 'blush'])
+      ],
+      secondary: ['shade', 'matte', 'nude'],
+      negative: BEAUTY_CLINICAL_NEGATIVES,
+      budget_scales: ['inr'],
+      display_name: 'makeup'
+    },
+    'beauty.fragrance': {
+      enabled: true,
+      patterns: [
+        'perfume', 'edt', 'edp', 'body mist', 'eau de parfum', 'eau de toilette',
+        ...bestNounPhrases(['perfume', 'body mist'])
+      ],
+      secondary: [],
+      negative: BEAUTY_CLINICAL_NEGATIVES,
+      budget_scales: ['inr'],
+      display_name: 'fragrance'
+    },
+    'beauty.mens_grooming': {
+      enabled: true,
+      patterns: [
+        'trimmer', 'razor', 'beard oil', 'beard care', 'shaving kit',
+        ...bestNounPhrases(['trimmer', 'razor', 'beard oil'])
+      ],
+      secondary: [],
+      negative: BEAUTY_CLINICAL_NEGATIVES,
+      budget_scales: ['inr'],
+      display_name: "men's grooming"
+    },
     'beauty.tools': stub('beauty tools', ['inr', 'usd']),
     'beauty.bath_body': stub('bath & body', ['inr', 'usd']),
     'beauty.nails': stub('nail care', ['inr', 'usd']),

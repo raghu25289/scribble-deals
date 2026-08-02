@@ -11,7 +11,7 @@
   // unconditionally (the one deliberate exception to "DEBUG gates every
   // log" below) so a stale reload after an edit is caught by eye in the
   // console immediately, instead of silently debugging the wrong build.
-  const VERSION = 'v0.4';
+  const VERSION = 'v1.0';
   console.log('[Scribble] ' + VERSION);
 
   window.ScribbleConfig = {
