@@ -11,7 +11,7 @@
   // unconditionally (the one deliberate exception to "DEBUG gates every
   // log" below) so a stale reload after an edit is caught by eye in the
   // console immediately, instead of silently debugging the wrong build.
-  const VERSION = 'v1.0';
+  const VERSION = 'v1.1';
   console.log('[Scribble] ' + VERSION);
 
   window.ScribbleConfig = {
@@ -20,7 +20,7 @@
     // Set true only for local debugging. Gates every diagnostic console.log
     // in the extension. Must ship false -- production paths never log page
     // content, and this flag governs the only logging that exists at all.
-    DEBUG: false,
+    DEBUG: true,
 
     // Debounce window (ms) after the observed conversation container goes
     // quiet before we classify. Streaming responses mean we don't want to
