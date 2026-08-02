@@ -1,0 +1,351 @@
+// Taxonomy: shopping categories + keyword/phrase patterns, and the blocked
+// topic list that silences the extension entirely. Loaded as a plain script
+// (no build step), so it attaches itself to `window.ScribbleTaxonomy`.
+//
+// Pattern format: each category has
+//   keywords: single-word/short stems checked as whole-word matches
+//   phrases:  stronger multi-word phrases; a single phrase hit is enough
+//   negative: patterns that, if present, suppress a match for this category
+//
+// NOTE: no finance categories here on purpose — personal finance is a
+// blocked topic (see BLOCKED below), not a shoppable category.
+
+(function () {
+  const CATEGORIES = {
+    'footwear.running': {
+      keywords: ['sneaker', 'sneakers', 'running shoe', 'running shoes', 'trainers', 'trail shoe'],
+      phrases: ['running shoes', 'best running shoes', 'shoes for running', 'marathon shoes'],
+      negative: []
+    },
+    'footwear.casual': {
+      keywords: ['loafers', 'sandals', 'boots', 'sneakers'],
+      phrases: ['casual shoes', 'everyday shoes'],
+      negative: ['running']
+    },
+    'electronics.laptops': {
+      keywords: ['laptop', 'laptops', 'notebook computer', 'macbook', 'chromebook', 'ultrabook'],
+      phrases: ['best laptop', 'laptop for', 'new laptop'],
+      negative: []
+    },
+    'electronics.headphones': {
+      keywords: ['headphones', 'earbuds', 'earphones', 'airpods', 'noise cancelling'],
+      phrases: ['wireless earbuds', 'noise cancelling headphones'],
+      negative: []
+    },
+    'electronics.tvs': {
+      keywords: ['television', 'tv', 'smart tv', 'oled', 'qled'],
+      phrases: ['best tv', 'new tv for'],
+      negative: []
+    },
+    'electronics.smartphones': {
+      keywords: ['smartphone', 'iphone', 'android phone', 'pixel phone', 'galaxy phone'],
+      phrases: ['new phone', 'best smartphone'],
+      negative: []
+    },
+    'electronics.cameras': {
+      keywords: ['camera', 'dslr', 'mirrorless camera', 'gopro'],
+      phrases: ['best camera for', 'new camera'],
+      negative: []
+    },
+    'electronics.smartwatches': {
+      keywords: ['smartwatch', 'apple watch', 'fitness tracker', 'garmin watch'],
+      phrases: ['best smartwatch'],
+      negative: []
+    },
+    'electronics.tablets': {
+      keywords: ['tablet', 'ipad', 'galaxy tab'],
+      phrases: ['best tablet for'],
+      negative: []
+    },
+    'electronics.gaming': {
+      keywords: ['gaming pc', 'graphics card', 'gpu', 'gaming laptop', 'console'],
+      phrases: ['best gaming pc', 'gaming setup'],
+      negative: []
+    },
+    'travel.flights': {
+      keywords: ['flight', 'flights', 'airfare', 'airline ticket'],
+      phrases: ['cheap flights', 'book a flight', 'flight deals'],
+      negative: []
+    },
+    'travel.hotels': {
+      keywords: ['hotel', 'hotels', 'resort', 'motel'],
+      phrases: ['hotel deals', 'best hotel in', 'book a hotel'],
+      negative: []
+    },
+    'travel.luggage': {
+      keywords: ['suitcase', 'luggage', 'carry-on', 'travel bag'],
+      phrases: ['best luggage for'],
+      negative: []
+    },
+    'travel.carrental': {
+      keywords: ['rental car', 'car rental'],
+      phrases: ['rent a car', 'cheap car rental'],
+      negative: []
+    },
+    'fitness.equipment': {
+      keywords: ['dumbbells', 'treadmill', 'yoga mat', 'kettlebell', 'exercise bike', 'home gym'],
+      phrases: ['fitness equipment', 'home gym setup'],
+      negative: []
+    },
+    'fitness.apparel': {
+      keywords: ['gym shorts', 'sports bra', 'leggings', 'workout clothes'],
+      phrases: ['workout apparel'],
+      negative: []
+    },
+    'home.mattresses': {
+      keywords: ['mattress', 'mattresses', 'memory foam mattress'],
+      phrases: ['best mattress for', 'mattress deals'],
+      negative: []
+    },
+    'home.furniture': {
+      keywords: ['sofa', 'couch', 'desk', 'office chair', 'bed frame', 'dining table'],
+      phrases: ['best office chair', 'furniture deals'],
+      negative: []
+    },
+    'home.kitchen': {
+      keywords: ['blender', 'air fryer', 'coffee maker', 'espresso machine', 'cookware'],
+      phrases: ['best air fryer', 'kitchen appliance'],
+      negative: []
+    },
+    'home.cleaning': {
+      keywords: ['vacuum cleaner', 'robot vacuum', 'steam mop'],
+      phrases: ['best robot vacuum'],
+      negative: []
+    },
+    'home.bedding': {
+      keywords: ['sheets', 'pillow', 'comforter', 'duvet'],
+      phrases: ['best pillow for'],
+      negative: []
+    },
+    'fashion.general': {
+      keywords: ['jacket', 'jeans', 'dress', 'coat', 'handbag', 'backpack'],
+      phrases: ['best jacket for', 'outfit for'],
+      negative: []
+    },
+    'fashion.watches': {
+      keywords: ['wristwatch', 'watch brand'],
+      phrases: ['best watch under'],
+      negative: ['smartwatch']
+    },
+    'beauty.skincare': {
+      keywords: ['moisturizer', 'sunscreen', 'serum', 'skincare routine', 'cleanser'],
+      phrases: ['best skincare for', 'skincare routine'],
+      negative: []
+    },
+    'beauty.haircare': {
+      keywords: ['shampoo', 'conditioner', 'hair dryer', 'straightener'],
+      phrases: ['best shampoo for'],
+      negative: []
+    },
+    'beauty.makeup': {
+      keywords: ['foundation makeup', 'mascara', 'lipstick', 'concealer'],
+      phrases: ['best foundation for'],
+      negative: []
+    },
+    'software.vpn': {
+      keywords: ['vpn', 'virtual private network'],
+      phrases: ['best vpn for', 'vpn deals'],
+      negative: []
+    },
+    'software.crm': {
+      keywords: ['crm', 'customer relationship management software'],
+      phrases: ['best crm for', 'crm software'],
+      negative: []
+    },
+    'software.antivirus': {
+      keywords: ['antivirus', 'malware protection'],
+      phrases: ['best antivirus for'],
+      negative: []
+    },
+    'software.productivity': {
+      keywords: ['project management tool', 'note taking app', 'productivity app'],
+      phrases: ['best project management tool'],
+      negative: []
+    },
+    'software.designtools': {
+      keywords: ['design software', 'photo editing software'],
+      phrases: ['best design software for'],
+      negative: []
+    },
+    'food.delivery': {
+      keywords: ['food delivery', 'meal kit', 'takeout'],
+      phrases: ['best meal kit', 'food delivery service'],
+      negative: []
+    },
+    'food.grocery': {
+      keywords: ['grocery delivery', 'grocery store online'],
+      phrases: ['best grocery delivery'],
+      negative: []
+    },
+    'food.coffee': {
+      keywords: ['coffee beans', 'coffee subscription'],
+      phrases: ['best coffee subscription'],
+      negative: []
+    },
+    'pets.supplies': {
+      keywords: ['dog food', 'cat food', 'pet bed', 'pet carrier'],
+      phrases: ['best dog food for'],
+      negative: []
+    },
+    'baby.gear': {
+      keywords: ['stroller', 'car seat', 'baby monitor', 'crib'],
+      phrases: ['best stroller for'],
+      negative: []
+    },
+    'outdoors.camping': {
+      keywords: ['tent', 'sleeping bag', 'camping stove', 'backpacking gear'],
+      phrases: ['best tent for', 'camping gear'],
+      negative: []
+    },
+    'outdoors.cycling': {
+      keywords: ['bicycle', 'bike helmet', 'road bike', 'mountain bike'],
+      phrases: ['best bike for'],
+      negative: []
+    },
+    'automotive.accessories': {
+      keywords: ['dash cam', 'car charger', 'floor mats', 'roof rack'],
+      phrases: ['best dash cam'],
+      negative: []
+    },
+    'office.supplies': {
+      keywords: ['printer', 'planner', 'notebook stationery', 'standing desk'],
+      phrases: ['best standing desk', 'office supplies'],
+      negative: []
+    },
+    'toys.games': {
+      keywords: ['board game', 'lego set', 'puzzle', 'video game'],
+      phrases: ['best board game for'],
+      negative: []
+    },
+    'garden.outdoor': {
+      keywords: ['lawn mower', 'patio furniture', 'grill', 'garden tools'],
+      phrases: ['best grill for'],
+      negative: []
+    }
+  };
+
+  // Budget band parsing: enumerated bands, USD + basic INR handling.
+  // Bands: under_50, 50_150, 150_500, 500_plus, unknown
+  function extractBudgetBand(text) {
+    const t = text.toLowerCase();
+
+    // "under $150", "below 10k", "less than 500 rupees", "budget of 2000 rupees"
+    const underPatterns = [
+      /(?:under|below|less than|no more than|max(?:imum)?(?: of)?)\s*(?:rs\.?|inr|₹|\$)?\s*(\d[\d,]*)\s*(k|rupees|rs|inr)?/i
+    ];
+    const budgetOfPattern = /budget\s*(?:of|is|:)?\s*(?:rs\.?|inr|₹|\$)?\s*(\d[\d,]*)\s*(k|rupees|rs|inr)?/i;
+    const roughPricePattern = /(?:rs\.?|inr|₹|\$)\s*(\d[\d,]*)\s*(k)?/i;
+
+    let amount = null;
+    let currency = 'usd';
+
+    let m = t.match(underPatterns[0]) || t.match(budgetOfPattern) || t.match(roughPricePattern);
+    if (m) {
+      let raw = m[1].replace(/,/g, '');
+      let num = parseInt(raw, 10);
+      const suffix = (m[2] || '').toLowerCase();
+      if (suffix === 'k') num *= 1000;
+      if (suffix === 'rupees' || suffix === 'rs' || suffix === 'inr' || /₹|inr|rupees|rs\.?/.test(t.slice(Math.max(0, m.index - 6), m.index))) {
+        currency = 'inr';
+      }
+      amount = num;
+    }
+
+    if (amount === null) return 'unknown';
+
+    // Normalize INR to a rough USD-equivalent band using a static approximate
+    // rate so band thresholds stay meaningful without a network call.
+    const usdEquivalent = currency === 'inr' ? amount / 83 : amount;
+
+    if (usdEquivalent < 50) return 'under_50';
+    if (usdEquivalent < 150) return '50_150';
+    if (usdEquivalent < 500) return '150_500';
+    return '500_plus';
+  }
+
+  // Blocked categories: checked first, short-circuit everything to null.
+  // Generous pattern lists on purpose -- silence is the safe default.
+  const BLOCKED = {
+    health: {
+      phrases: [
+        'symptom', 'symptoms', 'diagnosed', 'diagnosis', 'chronic pain', 'blood pressure',
+        'blood sugar', 'my doctor', 'my dr said', 'prescription', 'medication', 'side effects',
+        'std ', 'sti ', 'biopsy', 'tumor', 'cancer', 'surgery', 'chemotherapy', 'disease',
+        'infection', 'rash', 'std test', 'pregnant', 'pregnancy', 'fertility', 'period cramps',
+        'std symptoms'
+      ]
+    },
+    mental_health: {
+      phrases: [
+        'depression', 'depressed', 'anxiety attack', 'anxious', 'panic attack', 'therapist',
+        'therapy session', 'bipolar', 'ptsd', 'ocd', 'eating disorder', 'self harm', 'self-harm',
+        'suicide', 'suicidal', 'want to die', 'end my life', 'crisis hotline', 'mental breakdown'
+      ]
+    },
+    personal_finance: {
+      phrases: [
+        'my debt', 'credit card debt', 'pay off my loan', 'student loan', 'bankruptcy',
+        'credit score', 'my mortgage', 'investing my savings', 'retirement savings',
+        'life insurance policy', 'health insurance plan', 'file my taxes', 'irs audit',
+        'payday loan', 'refinance my', 'my 401k', 'stock portfolio advice'
+      ]
+    },
+    legal: {
+      phrases: [
+        'my lawyer', 'lawsuit', 'sue my', 'get sued', 'custody battle', 'divorce proceedings',
+        'restraining order', 'criminal charge', 'arrested for', 'plea deal', 'file for divorce'
+      ]
+    },
+    relationships: {
+      phrases: [
+        'my boyfriend', 'my girlfriend', 'my husband', 'my wife', 'my ex', 'breakup', 'break up with',
+        'cheating on me', 'is cheating', 'my marriage', 'divorcing', 'toxic relationship',
+        'my partner is'
+      ]
+    },
+    sexuality: {
+      phrases: [
+        'coming out as', 'am i gay', 'am i bisexual', 'sexual orientation', 'erectile dysfunction',
+        'libido', 'sexual performance'
+      ]
+    },
+    religion: {
+      phrases: [
+        'losing my faith', 'is god real', 'my religion', 'convert to islam', 'convert to christianity',
+        'religious doubts'
+      ]
+    },
+    politics: {
+      phrases: [
+        'who should i vote for', 'which party', 'political party', 'election candidate',
+        'my political views'
+      ]
+    },
+    immigration: {
+      phrases: [
+        'my visa', 'green card', 'deportation', 'asylum claim', 'immigration status',
+        'work permit application', 'my citizenship application'
+      ]
+    },
+    employment: {
+      phrases: [
+        'wrongfully fired', 'getting fired', 'fired from my job', 'workplace harassment',
+        'hostile work environment', 'my boss is', 'file a complaint against my employer'
+      ]
+    },
+    minors: {
+      phrases: [
+        'my child has', 'my son has', 'my daughter has', 'my kid is being bullied',
+        'child custody', 'my teenager'
+      ]
+    },
+    crisis: {
+      phrases: [
+        'grieving', 'my mom died', 'my dad died', 'someone died', 'in crisis', 'overdose',
+        'i want to hurt myself', 'i want to hurt someone'
+      ]
+    }
+  };
+
+  window.ScribbleTaxonomy = { CATEGORIES, BLOCKED, extractBudgetBand };
+})();

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Scribble Deals</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="consent-screen" class="screen" hidden>
+    <h1>Scribble finds you deals while you use AI search.</h1>
+    <ul class="consent-bullets">
+      <li>Scribble reads the page on your device only, to spot what you are shopping for.</li>
+      <li>Nothing you type ever leaves your computer. No conversations are stored, anywhere, ever.</li>
+      <li>Scribble stays silent on personal topics: health, money, relationships, legal.</li>
+      <li>Works only on chatgpt.com, claude.ai, google.com, perplexity.ai, and gemini.google.com. Turn it off any time.</li>
+    </ul>
+    <div class="consent-actions">
+      <button id="consent-accept" class="btn btn-primary">Turn on Scribble</button>
+      <button id="consent-decline" class="btn btn-secondary">Not now</button>
+    </div>
+  </div>
+
+  <div id="settings-screen" class="screen" hidden>
+    <h1>Scribble Deals</h1>
+
+    <div class="row row-global">
+      <label class="switch-label">
+        <span>Scribble is on</span>
+        <input type="checkbox" id="global-toggle" />
+      </label>
+    </div>
+
+    <div class="site-list" id="site-list"></div>
+
+    <p class="footnote">
+      Scribble reads pages locally to spot shopping intent. Nothing you type is ever stored or sent anywhere.
+    </p>
+  </div>
+
+  <script src="../content/config.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
