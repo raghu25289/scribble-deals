@@ -1,22 +1,13 @@
 // Adapter: www.google.com/search
 //
 // SELECTOR WARNING: everything below is scoped to this file on purpose.
-// Google's SERP markup is obfuscated, A/B tested, and changes constantly --
-// unlike the chat adapters, there is no single confident selector here by
-// design. This adapter tries several independent candidates in sequence,
-// DEBUG-logs every attempt, and always has a safe query-only fallback
-// rather than failing silent. Matches only /search paths (enforced by the
-// manifest match pattern, not re-checked here).
-//
-// PROVENANCE NOTE: the captured HTML this file was rebuilt against reads
-// as Google's own "what is an AI Overview" explainer copy (a definitional
-// blurb about AI Overviews themselves), not a live overview answering an
-// actual shopping query -- so the exact selectors below are informed by
-// its real DOM shape (jscontroller/data-sfc-root/data-subtree attributes)
-// but not verified against genuine shopping-query overview content. If
-// this adapter's fallback-chain DEBUG logs show every candidate missing
-// on a real overview, that's the signal to recapture from an actual
-// "best X under $Y" query with a visible overview and tighten the chain.
+// Rebuilt against a verified live structure (2 Aug 2026) -- replaces the
+// earlier v1.1 speculative candidate chain (data-subtree/jscontroller
+// guesses), which was explicitly built against unverified content and is
+// no longer needed now that a confirmed anchor exists. Google's SERP is
+// still obfuscated and A/B tested, so this stays defensive: never select
+// by jsname or generated ids, always land on query-only rather than
+// failing silent.
 
 (function () {
   window.ScribbleAdapters = window.ScribbleAdapters || {};
@@ -33,61 +24,66 @@
     return `<${el.tagName.toLowerCase()}${id}>`;
   }
 
-  // Ordered, independent candidates for the AI Overview container. Each is
-  // tried in turn; none is assumed correct. "mfl"/"aimfl" appears in a
-  // data-subtree value in the captured markup (plausibly "AI multi-line" /
-  // "model-fed-line" internal naming); jscontroller values are Google's
-  // own JS-framework wiring hooks, which tend to outlive CSS class names
-  // (those are visibly hashed/build-generated in the captured markup) but
-  // are still not guaranteed stable across deploys or A/B cohorts.
-  const OVERVIEW_CONTAINER_CANDIDATES = [
-    '[data-subtree*="mfl"]',
-    '[jscontroller^="TDBkbc"]',
-    '[data-sfc-root="ep"]',
-    // Pre-existing, less specific candidates from the original build --
-    // kept as later-priority fallbacks rather than removed, since they
-    // cost nothing to try and may still catch a differently-shaped overview.
-    '[data-attrid="wa:/description"]',
-    '[jsname][data-hveid] div[data-attrid]'
+  // Phrases Google itself renders inside the overview container when
+  // generation failed or is unavailable -- these are NOT page content in
+  // the sense the privacy rule cares about (they're Google's own static
+  // UI strings, not conversation content), so matching against them here
+  // is fine; nothing about the user's query or the page's substance is
+  // logged.
+  const NO_OVERVIEW_PHRASES = [
+    'an ai overview is not available for this search',
+    "can't generate an ai overview right now",
+    'cant generate an ai overview right now'
   ];
 
-  function findOverviewContainer() {
-    for (const sel of OVERVIEW_CONTAINER_CANDIDATES) {
-      let el;
-      try {
-        el = document.querySelector(sel);
-      } catch (e) {
-        continue;
-      }
-      if (el) {
-        debugLog('overview container candidate matched:', sel, describeElement(el));
-        return el;
-      }
-      debugLog('overview container candidate missed:', sel);
+  function findOverviewHeading() {
+    const headings = document.querySelectorAll('[role="heading"]');
+    for (const h of headings) {
+      if ((h.innerText || '').trim() === 'AI Overview') return h;
     }
     return null;
+  }
+
+  function findOverviewContainer() {
+    const heading = findOverviewHeading();
+    if (!heading) {
+      debugLog('no [role="heading"] with text "AI Overview" found');
+      return null;
+    }
+
+    let node = heading;
+    for (let i = 0; i < 12 && node; i++) {
+      if (node.id === 'm-x-content' || node.hasAttribute('data-mcpr') || node.hasAttribute('data-subtree')) {
+        debugLog('overview container found:', describeElement(node));
+        return node;
+      }
+      node = node.parentElement;
+    }
+
+    debugLog('AI Overview heading found but no #m-x-content/[data-mcpr]/[data-subtree] ancestor within 12 levels -- using the heading\'s parent as a last resort');
+    return heading.parentElement;
   }
 
   function getConversationRoot() {
     const overview = findOverviewContainer();
     if (overview) {
-      debugLog('conversation root: level 1 (overview container)', describeElement(overview));
+      debugLog('conversation root: level 1 (overview container)');
       return overview;
-    }
-
-    const rso = document.querySelector('#rso');
-    if (rso) {
-      debugLog('conversation root: level 2 fallback (#rso) -- no overview container found yet');
-      return rso;
     }
 
     const search = document.querySelector('#search');
     if (search) {
-      debugLog('conversation root: level 3 fallback (#search)');
+      debugLog('conversation root: level 2 fallback (#search) -- no overview container found yet');
       return search;
     }
 
-    debugLog('conversation root: level 4 fallback (document.body) -- no #rso/#search found');
+    const rcnt = document.querySelector('#rcnt');
+    if (rcnt) {
+      debugLog('conversation root: level 3 fallback (#rcnt)');
+      return rcnt;
+    }
+
+    debugLog('conversation root: level 4 fallback (document.body) -- no #search/#rcnt found');
     return document.body;
   }
 
@@ -99,8 +95,6 @@
     } catch (e) {
       // fall through to the input-value fallback below
     }
-    // Secondary source, per the shared rule: read the input's current
-    // value, never write to it or dispatch anything at it.
     try {
       const input = document.querySelector('input[name="q"], textarea[name="q"]');
       return (input && input.value) || '';
@@ -109,41 +103,25 @@
     }
   }
 
+  function looksLikeNoOverviewMessage(text) {
+    const lower = text.toLowerCase();
+    return NO_OVERVIEW_PHRASES.some((phrase) => lower.includes(phrase));
+  }
+
   function extractOverviewText() {
-    // Re-scan the same candidate list at extract() time (not just at
-    // getConversationRoot() time) -- the overview loads asynchronously
-    // and may not have existed yet when the root was first resolved; by
-    // the time a mutation settles enough to classify, it likely has.
-    for (const sel of OVERVIEW_CONTAINER_CANDIDATES) {
-      let nodes;
-      try {
-        nodes = document.querySelectorAll(sel);
-      } catch (e) {
-        continue;
-      }
-      for (const el of nodes) {
-        const text = el.innerText || '';
-        if (text.length > 40) {
-          debugLog('overview text extracted via:', sel);
-          return text;
-        }
-      }
+    const container = findOverviewContainer();
+    if (!container) {
+      debugLog('no AI Overview container -- falling back to query-only (clean, expected path, not a failure)');
+      return '';
     }
 
-    // Last-resort broad candidate, matching the original v1.0 heuristic:
-    // any result-column block with substantial text. Deliberately last --
-    // widest net, most likely to catch the wrong thing.
-    const broad = document.querySelectorAll('#rso div[data-hveid]');
-    for (const el of broad) {
-      const text = el.innerText || '';
-      if (text.length > 40) {
-        debugLog('overview text extracted via broad fallback: #rso div[data-hveid]');
-        return text;
-      }
+    const text = container.innerText || '';
+    if (looksLikeNoOverviewMessage(text)) {
+      debugLog('AI Overview container present but shows a not-available/failed message -- treating as no-overview');
+      return '';
     }
 
-    debugLog('no AI Overview found by any candidate -- falling back to query-only (per product spec, this is fine: a search query is itself high-signal)');
-    return '';
+    return text;
   }
 
   function extract() {

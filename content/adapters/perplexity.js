@@ -1,39 +1,73 @@
 // Adapter: www.perplexity.ai
 //
 // SELECTOR WARNING: everything below is scoped to this file on purpose.
-// Perplexity's DOM structure changes without notice; when it breaks, fixing
-// it should mean editing only this file's selectors, nothing else.
-//
-// Reads the query and the answer block. The sources sidebar exists in the
-// DOM but is deliberately ignored for classification -- it's citations, not
-// shopping intent signal.
+// Rebuilt against a verified live structure (2 Aug 2026), not guessed.
+// The Radix tabs structure (Answer/Links/Images) is the stable spine;
+// Radix's own generated ids (radix-_r_xx_) are never selected on.
 
 (function () {
   window.ScribbleAdapters = window.ScribbleAdapters || {};
 
-  function getConversationRoot() {
+  function debugLog(...args) {
+    if (window.ScribbleConfig && window.ScribbleConfig.DEBUG) {
+      console.log('[Scribble/adapter:perplexity]', ...args);
+    }
+  }
+
+  function describeElement(el) {
+    if (!el) return 'null';
+    const id = el.id ? `#${el.id}` : '';
+    return `<${el.tagName.toLowerCase()}${id}>`;
+  }
+
+  function getActivePanel() {
     return (
-      document.querySelector('main') ||
-      document.body
+      document.querySelector('main [role="tabpanel"][data-state="active"]') ||
+      document.querySelector('[role="tabpanel"][data-state="active"]')
     );
   }
 
+  function getConversationRoot() {
+    const panel = getActivePanel();
+    if (panel) {
+      debugLog('conversation root: level 1 (active tabpanel)', describeElement(panel));
+      return panel;
+    }
+
+    const main = document.querySelector('main');
+    if (main) {
+      debugLog('conversation root: level 2 fallback (main) -- no active tabpanel found');
+      return main;
+    }
+
+    debugLog('conversation root: level 3 fallback (document.body)');
+    return document.body;
+  }
+
   function extract() {
-    // Query text usually renders as a heading-like block at the top of a
-    // thread turn; answer renders in a prose block below it. Both selectors
-    // are intentionally broad with an innerText length filter as a
-    // safety net since Perplexity's class names are hashed/unstable.
-    const queryEl = document.querySelector('[data-testid="thread-query"], h1');
-    const answerEls = document.querySelectorAll(
-      '[data-testid="answer-content"], .prose'
-    );
+    const panel = getActivePanel();
+    if (!panel) {
+      debugLog('extract(): no active tabpanel found, falling back to document.title for userText');
+      return { userText: document.title || '', responseText: '' };
+    }
 
-    const userText = queryEl ? queryEl.innerText || '' : '';
-    const responseText = answerEls.length
-      ? answerEls[answerEls.length - 1].innerText || ''
-      : '';
+    // Query heading lives inside the active panel; the Links/Images panels
+    // are data-state="inactive" and stay empty until opened, so sources
+    // are excluded automatically -- inactive panels are never read.
+    const headingEl = panel.querySelector('[role="heading"]');
+    let userText = headingEl ? (headingEl.innerText || '') : '';
+    if (!userText) {
+      debugLog('extract(): no [role="heading"] in active panel, falling back to document.title');
+      userText = document.title || '';
+    }
 
-    // Note: sources/citations sidebar intentionally not read here.
+    let responseText = panel.innerText || '';
+    if (headingEl) {
+      const headingText = headingEl.innerText || '';
+      if (headingText && responseText.startsWith(headingText)) {
+        responseText = responseText.slice(headingText.length).trimStart();
+      }
+    }
 
     return { userText, responseText };
   }
