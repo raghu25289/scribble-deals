@@ -3,14 +3,28 @@
 // (no build step), so it attaches itself to `window.ScribbleTaxonomy`.
 //
 // Pattern format: each category has
-//   keywords: single-word/short stems checked as whole-word matches
-//   phrases:  stronger multi-word phrases; a single phrase hit is enough
-//   negative: patterns that, if present, suppress a match for this category
+//   keywords:  single-word/short stems checked as whole-word matches, 1 hit
+//   phrases:   stronger multi-word phrases; a single phrase hit is enough
+//              on its own regardless of the numeric hit total
+//   secondary: weak, generic signals (worth half a hit) -- not confident
+//              enough alone to indicate shopping intent, only useful
+//              alongside a real keyword/phrase hit
+//   negative:  patterns that, if present, suppress a match for this category
 //
 // NOTE: no finance categories here on purpose — personal finance is a
 // blocked topic (see BLOCKED below), not a shoppable category.
 
 (function () {
+  // "designer <garment>" reads as a strong, unambiguous shopping signal
+  // regardless of which garment noun follows -- generated as a combinator
+  // rather than hand-listing every pairing, since it's a literal cross
+  // product of one qualifier word against the garment noun list below.
+  const DESIGNER_GARMENT_NOUNS = [
+    'shirt', 'shirts', 't-shirt', 'dress shirt', 'jacket', 'jeans', 'trousers',
+    'dress', 'hoodie', 'sneakers', 'coat', 'handbag', 'backpack'
+  ];
+  const DESIGNER_GARMENT_PHRASES = DESIGNER_GARMENT_NOUNS.map((noun) => `designer ${noun}`);
+
   const CATEGORIES = {
     'footwear.running': {
       keywords: ['sneaker', 'sneakers', 'running shoe', 'running shoes', 'trainers', 'trail shoe'],
@@ -118,8 +132,16 @@
       negative: []
     },
     'fashion.general': {
-      keywords: ['jacket', 'jeans', 'dress', 'coat', 'handbag', 'backpack'],
-      phrases: ['best jacket for', 'outfit for'],
+      keywords: [
+        'jacket', 'jeans', 'dress', 'coat', 'handbag', 'backpack',
+        'shirt', 'shirts', 't-shirt', 'dress shirt', 'trousers', 'hoodie', 'sneakers'
+      ],
+      phrases: ['best jacket for', 'outfit for', ...DESIGNER_GARMENT_PHRASES],
+      // Brand-adjacent words alone don't confirm shopping intent (e.g.
+      // "premium" shows up for electronics too), so they only count for
+      // half a hit -- enough to tip a borderline match, never enough on
+      // their own to clear the two-hit threshold.
+      secondary: ['designer', 'luxury', 'premium'],
       negative: []
     },
     'fashion.watches': {

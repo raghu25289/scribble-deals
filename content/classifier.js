@@ -42,37 +42,45 @@
         continue;
       }
 
-      let hits = 0;
+      // Weighted hit total: keyword/phrase hits count as a full point,
+      // `secondary` (brand-adjacent, generic) signals count as half a
+      // point -- strong enough to tip a borderline match, never enough
+      // alone to clear the two-point threshold.
+      let points = 0;
       let strongPhraseHit = false;
 
       for (const kw of def.keywords || []) {
-        if (wordBoundaryMatch(text, kw)) hits += 1;
+        if (wordBoundaryMatch(text, kw)) points += 1;
       }
       for (const phrase of def.phrases || []) {
         if (wordBoundaryMatch(text, phrase)) {
-          hits += 1;
+          points += 1;
           strongPhraseHit = true;
         }
       }
+      for (const secondary of def.secondary || []) {
+        if (wordBoundaryMatch(text, secondary)) points += 0.5;
+      }
 
-      if (hits === 0) continue;
+      if (points === 0) continue;
 
-      // Threshold: at least two independent pattern hits, OR one strong
-      // phrase match. Confidence scales gently with extra hits, capped.
-      const meetsThreshold = hits >= 2 || strongPhraseHit;
+      // Threshold: at least two points worth of independent pattern hits,
+      // OR one strong phrase match. Confidence scales gently with extra
+      // points, capped.
+      const meetsThreshold = points >= 2 || strongPhraseHit;
       if (!meetsThreshold) {
-        nearMisses.push({ category: name, hits });
+        nearMisses.push({ category: name, points });
         continue;
       }
 
-      const confidence = Math.min(0.95, 0.55 + hits * 0.12);
-      scored.push({ category: name, hits, confidence });
+      const confidence = Math.min(0.95, 0.55 + points * 0.12);
+      scored.push({ category: name, points, confidence });
     }
 
-    scored.sort((a, b) => b.confidence - a.confidence || b.hits - a.hits);
+    scored.sort((a, b) => b.confidence - a.confidence || b.points - a.points);
 
     if (scored.length === 0 && nearMisses.length && window.ScribbleConfig && window.ScribbleConfig.DEBUG) {
-      nearMisses.sort((a, b) => b.hits - a.hits);
+      nearMisses.sort((a, b) => b.points - a.points);
       debugLog('near-miss categories (below threshold):', nearMisses.slice(0, 3));
     }
 
