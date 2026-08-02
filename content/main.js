@@ -15,6 +15,19 @@
     }
   }
 
+  // Reloading/updating the extension while a tab stays open orphans this
+  // content script: chrome.runtime (and its .id) go away, so any later
+  // chrome.* call throws "Cannot read properties of undefined". Every
+  // function that touches chrome.runtime or chrome.storage checks this
+  // first and stands down instead of crashing.
+  function isContextValid() {
+    try {
+      return !!(chrome && chrome.runtime && chrome.runtime.id);
+    } catch (e) {
+      return false;
+    }
+  }
+
   function describeElement(el) {
     if (!el) return 'null';
     const id = el.id ? `#${el.id}` : '';
@@ -27,9 +40,29 @@
   debugLog('content script loaded on', location.hostname, location.pathname);
 
   (async function boot() {
-    // First functional statement: consent gate. If the user has not
-    // explicitly accepted, every content script no-ops immediately.
-    const stored = await chrome.storage.local.get(['consent', 'settings']);
+    // First functional statement of all: if the extension context is
+    // already gone (reloaded/updated while this tab stayed open), there is
+    // nothing safe to do -- bail before the first chrome.* touch below.
+    if (!isContextValid()) {
+      debugLog('context invalidated, standing down');
+      return;
+    }
+    let contextInvalidated = false;
+
+    // Consent gate. If the user has not explicitly accepted, every content
+    // script no-ops immediately.
+    //
+    // try/catch on top of the pre-check above: the pre-check only catches
+    // "already invalid before we tried"; if invalidation happens WHILE this
+    // await is in flight, chrome.storage.local.get rejects instead, which
+    // would otherwise be an unhandled promise rejection.
+    let stored;
+    try {
+      stored = await chrome.storage.local.get(['consent', 'settings']);
+    } catch (e) {
+      debugLog('context invalidated, standing down');
+      return;
+    }
     debugLog('consent read from chrome.storage.local key "consent":', stored.consent);
     if (!stored.consent || !stored.consent.accepted) {
       debugLog('no accepted consent record, no-op');
@@ -65,21 +98,44 @@
       return;
     }
 
-    let offersCache = null;
-    async function loadOffers() {
-      if (offersCache) return offersCache;
-      // Bundled catalog only. This is a local extension resource fetch, not
-      // an external network request -- it never leaves the browser.
-      //
-      // SEAM: a future version could refresh the catalog from a remote URL
-      // here. Not implemented in this MVP by design -- do not add a fetch()
-      // to an external host without revisiting the "no network requests"
-      // product rule above.
-      const url = chrome.runtime.getURL('data/offers.json');
-      const res = await fetch(url);
-      offersCache = await res.json();
-      return offersCache;
+    // Loaded once, at script init, and kept in memory -- classification
+    // never triggers a fetch itself, it only ever reads this (already
+    // resolved, by the time it's needed) promise.
+    let offersPromise = null;
+    function loadOffersOnce() {
+      if (offersPromise) return offersPromise;
+      offersPromise = (async () => {
+        if (!isContextValid()) {
+          standDown();
+          return [];
+        }
+        try {
+          // Bundled catalog only. This is a local extension resource fetch,
+          // not an external network request -- it never leaves the browser.
+          //
+          // SEAM: a future version could refresh the catalog from a remote
+          // URL here. Not implemented in this MVP by design -- do not add a
+          // fetch() to an external host without revisiting the "no network
+          // requests" product rule above.
+          const url = chrome.runtime.getURL('data/offers.json');
+          const res = await fetch(url);
+          return await res.json();
+        } catch (e) {
+          // Covers invalidation happening mid-flight (the pre-check above
+          // only catches "already invalid before we tried") and any other
+          // resource-load failure -- fail to an empty catalog, not an
+          // unhandled rejection.
+          standDown();
+          return [];
+        }
+      })();
+      return offersPromise;
     }
+
+    // Kick off the fetch now, at init, rather than lazily on first
+    // classification -- by the time anything is classified the catalog is
+    // already in memory (or resolving).
+    loadOffersOnce();
 
     async function handleClassification(result) {
       if (!result) {
@@ -89,7 +145,7 @@
 
       debugLog('classifier result:', result);
 
-      const offers = await loadOffers();
+      const offers = await loadOffersOnce();
       const matches = offers.filter((o) => o.category === result.category);
       if (!matches.length) {
         debugLog('panel render skipped: no catalog offers for category', result.category);
@@ -179,7 +235,33 @@
     let observer = null;
     let currentRoot = null;
 
+    function standDown() {
+      if (contextInvalidated) return; // idempotent -- announce/teardown once
+      contextInvalidated = true;
+      debugLog('context invalidated, standing down');
+      clearTimers();
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+      if (window.ScribblePanel && window.ScribblePanel.teardown) {
+        window.ScribblePanel.teardown();
+      }
+    }
+
     function handleMutations(records) {
+      // Nothing else in this file re-touches chrome.* after the initial
+      // boot/fetch (by design -- the catalog is loaded once, not on every
+      // classification), so a reload/update happening well into a session
+      // would otherwise never be noticed until something crashed. Mutation
+      // callbacks are this content script's one reliably recurring
+      // heartbeat on a live ChatGPT page, so that's where this is checked
+      // proactively instead of only reactively guarding chrome.* call sites.
+      if (!isContextValid()) {
+        standDown();
+        return;
+      }
+
       if (currentRoot && !currentRoot.isConnected) {
         debugLog('observed root detached from document, reinitializing');
         attachObserver();
@@ -225,6 +307,7 @@
     // and add a popstate listener as a second signal.
     let lastHref = location.href;
     function onLocationChange(source) {
+      if (contextInvalidated) return; // don't resurrect a torn-down observer
       if (location.href === lastHref) return;
       lastHref = location.href;
       debugLog('SPA navigation detected via', source, '-- new url:', location.pathname);

@@ -806,5 +806,20 @@
     }
   }
 
-  window.ScribblePanel = { render, hide, isDismissedThisSession };
+  // Called by main.js when the extension context is invalidated (reload
+  // while this tab stayed open). Removes the panel from the page entirely
+  // rather than leaving a dead, unresponsive host element behind.
+  function teardown() {
+    stopThemePolling();
+    document.removeEventListener('keydown', onKeyDown);
+    if (hostEl && hostEl.parentNode) {
+      hostEl.parentNode.removeChild(hostEl);
+    }
+    hostEl = null;
+    shadow = null;
+    mounted = false;
+    lastRenderedKey = null;
+  }
+
+  window.ScribblePanel = { render, hide, isDismissedThisSession, teardown };
 })();
