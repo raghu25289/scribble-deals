@@ -35,6 +35,19 @@
     return `<${el.tagName.toLowerCase()}${id}${testId ? ` [data-testid=${testId}]` : ''}>`;
   }
 
+  // Non-cryptographic string hash -- used ONLY to compare "is this the
+  // same turn as last time", never logged or stored anywhere. This is the
+  // turn-identity mechanism, deliberately not the raw userText itself, so
+  // there is nothing content-shaped sitting in a variable that a future
+  // debugLog() could accidentally leak.
+  function simpleHash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash * 31 + str.charCodeAt(i)) | 0;
+    }
+    return hash;
+  }
+
   // Pure diagnostic, zero page content, logged before the consent guard so
   // "did the script even inject" is never itself a mystery.
   debugLog('content script loaded on', location.hostname, location.pathname);
@@ -140,6 +153,18 @@
     async function handleClassification(result) {
       if (!result) {
         debugLog('classifier result: null (see [Scribble/classifier] log above for reason)');
+        // Defense in depth: the new-turn detector in handleMutations()
+        // already clears on the first mutation of a turn, well before
+        // classification finishes, so the panel should already be hidden
+        // by the time a null result lands. Clearing again here is a
+        // no-op in the normal case, but guarantees "null classification
+        // never leaves stale offers visible" even if that earlier
+        // detection is ever bypassed (e.g. the immediate classification
+        // pass on attachObserver(), which has no "previous mutation" to
+        // hang a new-turn check off of).
+        if (window.ScribblePanel && window.ScribblePanel.clear) {
+          window.ScribblePanel.clear('null_classification');
+        }
         return;
       }
 
@@ -235,6 +260,14 @@
     let observer = null;
     let currentRoot = null;
 
+    // Turn identity: a hash of the latest userText, compared on every
+    // mutation batch so a new turn is caught the moment it starts, not
+    // 800ms-4000ms later when classification of THAT turn finally
+    // finishes. null means "no turn observed yet on this page" -- the
+    // very first turn shouldn't log a "cleared" line for content that was
+    // never showing in the first place.
+    let lastTurnHash = null;
+
     function standDown() {
       if (contextInvalidated) return; // idempotent -- announce/teardown once
       contextInvalidated = true;
@@ -273,6 +306,23 @@
 
       mutationCount += meaningful.length;
       throttledMutationLog();
+
+      // New-turn detection: userText only changes when the user actually
+      // submits a new message (streaming only touches responseText), so
+      // this fires exactly once per real new turn, never mid-stream. Hide
+      // and clear immediately -- before classification of the new turn
+      // has even started, let alone finished -- so a hotels panel can
+      // never survive into an unrelated lipstick conversation.
+      const turnHash = simpleHash((adapter.extract().userText || ''));
+      if (lastTurnHash === null) {
+        lastTurnHash = turnHash; // first turn on this page, nothing to clear
+      } else if (turnHash !== lastTurnHash) {
+        lastTurnHash = turnHash;
+        if (window.ScribblePanel && window.ScribblePanel.clear) {
+          window.ScribblePanel.clear('new_turn');
+        }
+      }
+
       scheduleClassification();
     }
 
@@ -293,9 +343,18 @@
       observer.observe(currentRoot, { childList: true, subtree: true, characterData: true });
       debugLog('observer attached to', describeElement(currentRoot));
 
-      // Content may already be present (e.g. Google's results page, or
-      // returning to an existing ChatGPT thread), so run one classification
-      // pass immediately rather than waiting for the first mutation.
+      // Establish the turn-identity baseline for whatever's already on
+      // screen right now. Content may already be present (e.g. Google's
+      // results page, or returning to an existing ChatGPT thread) and its
+      // classification below runs via this direct call, NOT through
+      // handleMutations() -- so without this, lastTurnHash would still be
+      // null when the actual NEXT turn's mutation arrives, and that next
+      // turn would be wrongly treated as "the first turn ever" (skipping
+      // the clear it should trigger).
+      lastTurnHash = simpleHash(adapter.extract().userText || '');
+
+      // Content may already be present, so run one classification pass
+      // immediately rather than waiting for the first mutation.
       scheduleClassification();
     }
 
@@ -310,7 +369,14 @@
       if (contextInvalidated) return; // don't resurrect a torn-down observer
       if (location.href === lastHref) return;
       lastHref = location.href;
+      lastTurnHash = null; // fresh conversation -- no prior turn to compare against
       debugLog('SPA navigation detected via', source, '-- new url:', location.pathname);
+      // Always clear as part of the teardown/re-init, unconditionally --
+      // a new chat/route is exactly the "unrelated conversation" case
+      // this whole fix exists for.
+      if (window.ScribblePanel && window.ScribblePanel.clear) {
+        window.ScribblePanel.clear('route_change');
+      }
       attachObserver();
     }
 

@@ -765,6 +765,27 @@
     }
   }
 
+  // Called by main.js the moment a new turn/route/null-classification
+  // invalidates whatever's currently showing -- e.g. a hotels panel must
+  // not still be visible once the conversation has moved on to lipstick.
+  // This is a VISIBILITY + CONTENT reset, not a host removal: the
+  // mount-once guard is untouched (mounted/hostEl/shadow stay as they
+  // are), so the next successful render() just re-populates and re-shows
+  // the same host rather than re-mounting.
+  function clear(reason) {
+    if (expanded) {
+      setExpanded(false);
+    }
+    if (cardListEl) {
+      cardListEl.innerHTML = '';
+    }
+    lastRenderedKey = null;
+    if (hostEl) {
+      hostEl.style.display = 'none';
+    }
+    debugLog('panel cleared: ' + reason);
+  }
+
   // Called by main.js when the extension context is invalidated (reload
   // while this tab stayed open). Removes the panel from the page entirely
   // rather than leaving a dead, unresponsive host element behind.
@@ -780,5 +801,5 @@
     lastRenderedKey = null;
   }
 
-  window.ScribblePanel = { render, hide, isDismissedThisSession, teardown };
+  window.ScribblePanel = { render, hide, clear, isDismissedThisSession, teardown };
 })();
