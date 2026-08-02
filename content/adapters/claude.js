@@ -51,36 +51,50 @@
     // from within the feed root already excludes them without any extra
     // filtering here.
     const articles = document.querySelectorAll('div[role="article"]');
+    debugLog('extract(): found', articles.length, '[role="article"] elements');
+
     if (!articles.length) {
       debugLog('extract(): no [role="article"] turns found');
       return { userText: '', responseText: '' };
     }
+
+    const lastArticle = articles[articles.length - 1];
+    const lastHasUserMessage = !!lastArticle.querySelector('[data-testid="user-message"]');
+    debugLog('extract(): last article contains [data-testid="user-message"]?', lastHasUserMessage);
 
     let userText = '';
     let responseText = '';
 
     for (let i = articles.length - 1; i >= 0; i--) {
       const article = articles[i];
+      const userNode = article.querySelector('[data-testid="user-message"]');
 
-      if (!userText) {
-        const userNode = article.querySelector('[data-testid="user-message"]');
-        if (userNode) {
-          userText = userNode.innerText || '';
-        }
+      if (!userText && userNode) {
+        userText = userNode.innerText || '';
       }
 
-      if (!responseText) {
-        const isUserArticle = article.querySelector('[data-testid="user-message"]');
-        if (!isUserArticle) {
-          const streamingEl = article.querySelector('[data-is-streaming]');
-          if (streamingEl) {
-            debugLog('assistant turn data-is-streaming=', streamingEl.getAttribute('data-is-streaming'));
-          }
-          // The article's accessible text carries an a11y-only prefix
-          // ("Claude responded:") ahead of the actual response content.
-          let text = article.innerText || '';
-          text = text.replace(/^Claude responded:\s*/, '');
-          responseText = text;
+      if (!responseText && !userNode) {
+        const streamingEl = article.querySelector('[data-is-streaming]');
+        if (streamingEl) {
+          debugLog('assistant-candidate article (index', i, ') data-is-streaming=', streamingEl.getAttribute('data-is-streaming'));
+        }
+
+        // The article's accessible text carries an a11y-only prefix
+        // ("Claude responded:") ahead of the actual response content.
+        const rawText = article.innerText || '';
+        const stripped = rawText.replace(/^Claude responded:\s*/i, '');
+        debugLog('assistant-candidate article (index', i, ') innerText length before strip=', rawText.length, 'after strip=', stripped.length);
+
+        if (stripped.length > 0) {
+          responseText = stripped;
+        } else {
+          // This non-user article had nothing left after stripping --
+          // likely a trailing action-bar/placeholder article rather than
+          // the real assistant turn (this is the "last article is empty"
+          // failure mode: grabbing it here would lock in responseText=''
+          // even though an earlier article has the real content). Keep
+          // scanning backward instead of accepting it.
+          debugLog('assistant-candidate article (index', i, ') empty after strip, trying an earlier article');
         }
       }
 
@@ -88,7 +102,7 @@
     }
 
     if (!userText) debugLog('extract(): no article containing [data-testid="user-message"] found');
-    if (!responseText) debugLog('extract(): no non-user article found for the assistant turn');
+    if (!responseText) debugLog('extract(): no non-empty non-user article found for the assistant turn');
 
     return { userText, responseText };
   }
