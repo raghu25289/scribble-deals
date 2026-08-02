@@ -101,8 +101,11 @@
         return;
       }
 
-      debugLog('panel render: showing', matches.length, 'offers for', result.category);
-      window.ScribblePanel.render(matches.slice(0, 8));
+      debugLog('invoking panel render with', matches.length, 'offers for', result.category);
+      // The authoritative "did it actually paint" confirmation (isConnected,
+      // bounding rect, resolved z-index) is logged by panel.js itself, after
+      // the DOM append -- that's the log that matters if nothing is visible.
+      window.ScribblePanel.render(matches.slice(0, 8), result.category);
     }
 
     function classifyNow(trigger) {
