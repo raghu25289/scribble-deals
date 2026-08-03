@@ -154,14 +154,27 @@
     // matched offer's own category display name are all fair game -- a
     // product token like "notion" should find a Notion offer even though
     // no taxonomy category pattern mentions it by name.
+    //
+    // Scored by distinct-token hit count, not a plain filter -- with up to
+    // 8 offers surviving the slice() in handleClassification, a query with
+    // many loose one-token matches (e.g. a shared "music" token pulling in
+    // unrelated instrument offers alongside the real Spotify/Apple Music
+    // hits) needs the strongest matches to win the cut. This only decides
+    // *selection*; on-screen order is still panel.js's rankOffers by
+    // value_score alone -- untouched here, per that file's own rule.
     function matchOffersByTokens(offers, tokens) {
       if (!tokens.length) return [];
       const { CATEGORIES } = window.ScribbleTaxonomy;
-      return offers.filter((o) => {
-        const displayName = (CATEGORIES[o.category] && CATEGORIES[o.category].display_name) || '';
-        const haystack = `${o.title} ${o.merchant} ${displayName}`.toLowerCase();
-        return tokens.some((t) => haystack.includes(t));
-      });
+      return offers
+        .map((o) => {
+          const displayName = (CATEGORIES[o.category] && CATEGORIES[o.category].display_name) || '';
+          const haystack = `${o.title} ${o.merchant} ${displayName}`.toLowerCase();
+          const score = tokens.filter((t) => haystack.includes(t)).length;
+          return { offer: o, score };
+        })
+        .filter((m) => m.score > 0)
+        .sort((a, b) => b.score - a.score || b.offer.value_score - a.offer.value_score)
+        .map((m) => m.offer);
     }
 
     async function handleClassification(result) {
