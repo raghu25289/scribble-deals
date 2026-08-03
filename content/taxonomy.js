@@ -1387,20 +1387,34 @@
   // userText only -- a shopper's own framing lives in what they typed,
   // not the assistant's response.
   // --------------------------------------------------------------------------
+  // Regex, not plain substrings, as of this pass -- \b word boundaries
+  // catch a wider range of real phrasing than exact-substring matching
+  // could (e.g. "recommend", "recommends", "recommendations" from one
+  // pattern) without the false-positive risk of a bare .includes() on a
+  // short fragment. All 8 groups from the original build are preserved
+  // (a since-reverted proposal dropped recommendation/upgrade_replacement/
+  // setup_bundle/occasion entirely, which would have broken every fixture
+  // that depends on those specifically -- kept intentionally here).
   const RESEARCH_SIGNALS = {
-    purchase: ['best ', 'top ', 'buy', 'price', ' under ', 'deal', 'discount', 'coupon', 'cheapest', 'where to buy', 'in stock'],
-    comparison: [' vs ', ' vs.', ' versus ', 'compare', 'better than', 'difference between'],
-    // 'similar' alone (not just 'similar to') so "similar perfumes to X"
-    // still counts -- the noun in between means the bare phrase 'similar
-    // to' never appears as a contiguous substring in that word order.
-    alternatives: ['alternatives to', 'alternative to', 'similar to', 'similar', 'like ', 'replacement for', 'competitors of', 'competitors to', 'instead of'],
-    evaluation: ['worth it', ' review', 'review of', 'should i get', 'pros and cons of', 'any good'],
-    recommendation: ['recommend', 'suggest', 'which should i', 'for my', 'for a', 'for beginners'],
-    upgrade_replacement: ['upgrade from', 'broke', 'died', 'switching from'],
-    setup_bundle: [' setup', ' essentials', ' checklist', ' kit'],
+    // Broadened with per-seat/per-user/free-trial pricing language and
+    // purchase/order/promo/offer, on top of the original purchase set --
+    // still the one group `dealSeeking` keys off, so this stays the home
+    // for "does this query care about cost" rather than splitting into a
+    // separate price group (that would change dealSeeking's meaning for
+    // every query already tested against it).
+    purchase: /\b(best|top|buy|purchase|order|price|pricing|cost|costs|under|deals?|discounts?|coupons?|promo|offers?|cheap(?:est|er)?|affordable|budget|where to buy|in stock|per (?:seat|user|month)|free (?:tier|plan|trial))\b/i,
+    comparison: /\b(vs\.?|versus|compare[ds]?|comparison|better than|difference between)\b/i,
+    // Bare 'similar' (not just 'similar to') so "similar perfumes to X"
+    // still counts -- the noun in between means the literal phrase
+    // 'similar to' never appears contiguous in that word order.
+    alternatives: /\b(alternatives?(?: to| for)?|competitors?(?: to| of)?|similar(?: to)?|instead of|replac(?:e|ement)(?: for)?|switch(?:ing)? from|like)\b/i,
+    evaluation: /\b(worth (?:it|buying)|reviews?(?: of)?|should i (?:get|buy|use)|pros and cons(?: of)?|any good|rated)\b/i,
+    recommendation: /\b(recommend(?:ations?)?|suggest(?:ions?)?|which should i|for (?:my|a|beginners))\b/i,
+    upgrade_replacement: /\b(upgrade(?:d|s)? from|broke|died|switching from)\b/i,
+    setup_bundle: /\b(setup|essentials|checklist|kit)\b/i,
     // Occasion words alone route to gifting -- see gifting.*/occasions.*
     // patterns, which already encode "occasion + gift noun" combinators.
-    occasion: ['gift', 'diwali', 'wedding', 'rakhi', 'birthday', 'anniversary']
+    occasion: /\b(gifts?|diwali|wedding|rakhi|birthday|anniversary)\b/i
   };
 
   // Narrowed to clearly non-commercial framings only (v2.0) -- "review of
@@ -1414,8 +1428,8 @@
   function detectResearchSignal(userText) {
     const t = (userText || '').toLowerCase();
     const matched = [];
-    for (const [name, phrases] of Object.entries(RESEARCH_SIGNALS)) {
-      if (phrases.some((p) => t.includes(p))) matched.push(name);
+    for (const [name, pattern] of Object.entries(RESEARCH_SIGNALS)) {
+      if (pattern.test(t)) matched.push(name);
     }
     const informational = INFORMATIONAL_SUPPRESSORS.some((p) => t.includes(p));
     return {
